@@ -9,7 +9,7 @@
   },
   "scripts": {
     "start": "node server/index.ts",
-    "test": "node --test engine/__tests__/",
+    "test": "node --test 'engine/__tests__/*.test.ts' 'server/import/__tests__/*.test.ts'",
     "build:web": "vite build --config web/vite.config.ts",
     "dev:web": "vite --config web/vite.config.ts"
   },
