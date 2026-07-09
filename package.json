@@ -1,0 +1,35 @@
+{
+  "name": "qalo-replen",
+  "version": "1.0.0",
+  "private": true,
+  "description": "QALO FBA Replenishment Planner — local dashboard to prevent Amazon stockouts",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "node server/index.ts",
+    "test": "node --test engine/__tests__/",
+    "build:web": "vite build --config web/vite.config.ts",
+    "dev:web": "vite --config web/vite.config.ts"
+  },
+  "dependencies": {
+    "@fastify/multipart": "^9.0.3",
+    "@fastify/static": "^8.2.0",
+    "better-sqlite3": "^12.2.0",
+    "fastify": "^5.4.0"
+  },
+  "devDependencies": {
+    "@tanstack/react-table": "^8.21.3",
+    "@tanstack/react-virtual": "^3.13.12",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.1.8",
+    "@types/react-dom": "^19.1.6",
+    "@vitejs/plugin-react": "^4.6.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "typescript": "^5.8.3",
+    "vite": "^7.0.0"
+  }
+}

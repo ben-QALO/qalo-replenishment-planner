@@ -1,0 +1,7 @@
+# Runtime data — never commit business data
+data/
+# Self-provisioned portable Node runtime
+runtime/
+node_modules/
+*.log
+.DS_Store
