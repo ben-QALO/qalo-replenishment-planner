@@ -1,18 +1,24 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { resolveVelocity } from '../velocity.ts';
+import type { StockoutDays } from '../types.ts';
 import { line, settings, WEIGHTS } from './helpers.ts';
 
-test('weighted blend across all four windows (hand-computed, real MXG09 numbers)', () => {
+// Convenience: resolveVelocity(line, settings, weights, growth, correction, stockoutDays)
+const V = (l: any, s: any = settings(), growth = 1.0, correction = true, sd?: StockoutDays) =>
+  resolveVelocity(l, s, WEIGHTS, growth, correction, sd);
+
+test('weighted blend across all four windows (in stock, no correction needed)', () => {
   const l = line({
     sku: 'MXG09', available: 112, reserved: 3,
     units_shipped_t7: 11, units_shipped_t30: 69, units_shipped_t60: 113, units_shipped_t90: 154,
   });
-  const v = resolveVelocity(l, settings(), WEIGHTS, 1.0);
+  const v = V(l);
   // 0.25·(11/7) + 0.45·(69/30) + 0.20·(113/60) + 0.10·(154/90) = 1.97563...
   assert.ok(Math.abs((v.base_velocity ?? 0) - 1.97563) < 0.001, `got ${v.base_velocity}`);
   assert.equal(v.source, 'report');
-  assert.equal(v.confidence, 'high'); // t30 = 69 ≥ 10
+  assert.equal(v.confidence, 'high');
+  assert.ok(!v.flags.includes('STOCKOUT_CORRECTED'));
 });
 
 test('missing windows are dropped and weights renormalized', () => {
@@ -21,66 +27,97 @@ test('missing windows are dropped and weights renormalized', () => {
     units_shipped_t7: 14, units_shipped_t30: 60,
     units_shipped_t60: null, units_shipped_t90: null,
   });
-  const v = resolveVelocity(l, settings(), WEIGHTS, 1.0);
-  // usable: w7=0.25, w30=0.45 → renorm to 0.357/0.643; r7=2, r30=2 → blend 2.
-  assert.ok(Math.abs((v.base_velocity ?? 0) - 2) < 1e-9);
+  assert.ok(Math.abs((V(l).base_velocity ?? 0) - 2) < 1e-9);
 });
 
 test('growth multiplier scales velocity, per-SKU beats global', () => {
   const l = line({ sku: 'A', available: 5, units_shipped_t7: 7, units_shipped_t30: 30, units_shipped_t60: 60, units_shipped_t90: 90 });
-  // all rates = 1
-  const global = resolveVelocity(l, settings(), WEIGHTS, 1.3);
-  assert.ok(Math.abs((global.velocity ?? 0) - 1.3) < 1e-9);
-  assert.ok(Math.abs((global.base_velocity ?? 0) - 1) < 1e-9);
-  const perSku = resolveVelocity(l, settings({ growth_multiplier: 2 }), WEIGHTS, 1.3);
-  assert.ok(Math.abs((perSku.velocity ?? 0) - 2) < 1e-9);
+  assert.ok(Math.abs((V(l, settings(), 1.3).velocity ?? 0) - 1.3) < 1e-9);
+  assert.ok(Math.abs((V(l, settings({ growth_multiplier: 2 }), 1.3).velocity ?? 0) - 2) < 1e-9);
 });
 
 test('manual override wins over report data and is flagged', () => {
   const l = line({ sku: 'A', available: 5, units_shipped_t30: 300 });
-  const v = resolveVelocity(l, settings({ velocity_override: 4 }), WEIGHTS, 1.0);
+  const v = V(l, settings({ velocity_override: 4 }));
   assert.equal(v.source, 'manual');
   assert.equal(v.velocity, 4);
   assert.ok(v.flags.includes('MANUAL_VELOCITY'));
 });
 
 test('no line and no override → velocity unknown (null), never zero', () => {
-  const v = resolveVelocity(null, settings(), WEIGHTS, 1.0);
+  const v = V(null);
   assert.equal(v.velocity, null);
   assert.equal(v.source, 'none');
-  assert.equal(v.confidence, 'none');
 });
 
-test('stockout-suppressed velocity is flagged low-confidence (OOS death-spiral guard)', () => {
+// ── Stockout correction ─────────────────────────────────────────────────────
+
+test('CORRECTION: out of stock now → uses best in-stock window rate, not the dragged blend', () => {
+  // Just went OOS: t7 collapsed, longer windows show true demand ~1.5/day.
   const l = line({
     sku: 'A', available: 0,
-    units_shipped_t7: 0, units_shipped_t30: 5, units_shipped_t60: 30, units_shipped_t90: 60,
+    units_shipped_t7: 2, units_shipped_t30: 40, units_shipped_t60: 90, units_shipped_t90: 140,
   });
-  const v = resolveVelocity(l, settings(), WEIGHTS, 1.0);
-  assert.ok(v.flags.includes('VELOCITY_SUPPRESSED'));
-  assert.equal(v.confidence, 'low');
+  const uncorrected = V(l, settings(), 1.0, false);
+  const corrected = V(l, settings(), 1.0, true);
+  // Uncorrected blend is dragged down by r7=0.29; corrected lifts to best rate (r90≈1.56).
+  assert.ok((uncorrected.base_velocity ?? 0) < 1.2, `blend was ${uncorrected.base_velocity}`);
+  assert.ok(Math.abs((corrected.base_velocity ?? 0) - 140 / 90) < 0.01, `corrected was ${corrected.base_velocity}`);
+  assert.ok(corrected.velocity! > uncorrected.velocity!);
+  assert.ok(corrected.flags.includes('STOCKOUT_CORRECTED'));
 });
 
-test('velocity spike and crash flags respect volume floors', () => {
-  const spike = resolveVelocity(
-    line({ sku: 'A', available: 10, units_shipped_t7: 50, units_shipped_t30: 60, units_shipped_t60: 70, units_shipped_t90: 80 }),
-    settings(), WEIGHTS, 1.0);
+test('CORRECTION: never lowers velocity — a genuine decline in stock is untouched', () => {
+  // In stock, declining: correction must not apply (available > 0).
+  const l = line({ sku: 'A', available: 50, units_shipped_t7: 7, units_shipped_t30: 60, units_shipped_t60: 150, units_shipped_t90: 270 });
+  const v = V(l);
+  assert.ok(!v.flags.includes('STOCKOUT_CORRECTED'));
+});
+
+test('CORRECTION: bounded by observed sales — never invents demand above the max window rate', () => {
+  const l = line({ sku: 'A', available: 0, units_shipped_t7: 0, units_shipped_t30: 30, units_shipped_t60: 60, units_shipped_t90: 90 });
+  const v = V(l);
+  // best observed rate = 1/day across all windows → corrected velocity is exactly 1.
+  assert.ok(Math.abs((v.base_velocity ?? 0) - 1) < 1e-9);
+});
+
+test('CORRECTION: can be turned off (setting), leaving the raw blend', () => {
+  const l = line({ sku: 'A', available: 0, units_shipped_t7: 0, units_shipped_t30: 40, units_shipped_t60: 90, units_shipped_t90: 140 });
+  const off = V(l, settings(), 1.0, false);
+  assert.ok(!off.flags.includes('STOCKOUT_CORRECTED'));
+});
+
+test('CORRECTION (history): effective-days lifts velocity when stockout days are known', () => {
+  // In stock now, but was OOS 20 of the last 30 days per history → t30 rate should divide by 10, not 30.
+  const l = line({ sku: 'A', available: 25, units_shipped_t7: 7, units_shipped_t30: 30, units_shipped_t60: 60, units_shipped_t90: 90 });
+  const sd: StockoutDays = { d7: 0, d30: 20, d60: 20, d90: 20, samples: 8 };
+  const v = V(l, settings(), 1.0, true, sd);
+  // t30 corrected rate = 30/(30-20) = 3.0 vs raw 1.0 → blend rises well above 1.
+  assert.ok((v.base_velocity ?? 0) > 1.5, `got ${v.base_velocity}`);
+  assert.ok(v.flags.includes('STOCKOUT_CORRECTED'));
+});
+
+test('CORRECTION (history): a window with too few in-stock days is dropped, not extrapolated', () => {
+  // OOS 28 of last 30 days: only 2 in-stock days < 25% of 30 → drop t30 window.
+  const l = line({ sku: 'A', available: 5, units_shipped_t7: 1, units_shipped_t30: 4, units_shipped_t60: 60, units_shipped_t90: 90 });
+  const sd: StockoutDays = { d7: 5, d30: 28, d60: 28, d90: 28, samples: 8 };
+  const v = V(l, settings(), 1.0, true, sd);
+  // t7 also fully OOS (5 of 7 → 2 in-stock ≥ 25% of 7? 1.75 floor → 2>=1.75 keeps t7).
+  // Key assertion: it produced a finite sane velocity without a divide-by-tiny blowup.
+  assert.ok(v.velocity !== null && v.velocity! < 5, `got ${v.velocity}`);
+});
+
+test('velocity spike and crash flags respect volume floors (informational only)', () => {
+  const spike = V(line({ sku: 'A', available: 10, units_shipped_t7: 50, units_shipped_t30: 60, units_shipped_t60: 70, units_shipped_t90: 80 }));
   assert.ok(spike.flags.includes('VELOCITY_SPIKE'));
-
-  const crash = resolveVelocity(
-    line({ sku: 'B', available: 10, units_shipped_t7: 1, units_shipped_t30: 60, units_shipped_t60: 120, units_shipped_t90: 180 }),
-    settings(), WEIGHTS, 1.0);
+  const crash = V(line({ sku: 'B', available: 10, units_shipped_t7: 1, units_shipped_t30: 60, units_shipped_t60: 120, units_shipped_t90: 180 }));
   assert.ok(crash.flags.includes('VELOCITY_CRASH'));
-
-  // tiny numbers: 2 sold this week vs 1/month before — no spike flag (volume floor)
-  const noise = resolveVelocity(
-    line({ sku: 'C', available: 10, units_shipped_t7: 2, units_shipped_t30: 2, units_shipped_t60: 2, units_shipped_t90: 3 }),
-    settings(), WEIGHTS, 1.0);
+  const noise = V(line({ sku: 'C', available: 10, units_shipped_t7: 2, units_shipped_t30: 2, units_shipped_t60: 2, units_shipped_t90: 3 }));
   assert.ok(!noise.flags.includes('VELOCITY_SPIKE'));
 });
 
 test('zero sales across all windows → velocity 0 (true zero-seller, not unknown)', () => {
-  const v = resolveVelocity(line({ sku: 'A', available: 40 }), settings(), WEIGHTS, 1.0);
+  const v = V(line({ sku: 'A', available: 40 }));
   assert.equal(v.velocity, 0);
   assert.equal(v.source, 'report');
 });

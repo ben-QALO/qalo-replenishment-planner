@@ -34,6 +34,13 @@ Also: whenever warehouse counts change outside the tool, update them under
   7/30/60/90 days (weights editable in Settings), × a growth multiplier you control
   (global or per SKU). Blank sales data counts as *unknown*, never zero — those SKUs
   go to the At-risk queue instead of getting a made-up recommendation.
+- **Stockout correction** (on by default, the fix for recurring stockouts): when a SKU
+  is out of stock, its recent Amazon sales look artificially low — it couldn't sell
+  because it was empty. Left alone, that makes it look slow, so it gets under-ordered
+  and stocks out again. With correction on, velocity uses the item's best *in-stock*
+  sales rate (and, once weekly snapshots accumulate, divides sales by in-stock days
+  only). Corrected SKUs carry a `stockout corrected` tag and say so in their audit
+  sentence. Toggle under Templates & Settings → Velocity model.
 - **Ship to FBA** fires when FBA days-of-cover < (ship+check-in) + (review cadence) +
   (safety days). Order-up-to that level, rounded to case packs, capped by warehouse stock.
 - **China PO** fires when *total pipeline* cover (FBA + warehouse + open POs) <

@@ -30,6 +30,7 @@ export function Templates({ refresh }: { refresh: () => void }) {
     setSettingsForm({
       w7: s.velocity_weights.w7, w30: s.velocity_weights.w30, w60: s.velocity_weights.w60, w90: s.velocity_weights.w90,
       growth: s.global_growth_multiplier, order_soon: s.order_soon_days, overstock: s.overstock_factor,
+      stockout_correction: s.stockout_correction,
     });
     setEdits({});
   });
@@ -87,6 +88,7 @@ export function Templates({ refresh }: { refresh: () => void }) {
         global_growth_multiplier: Number(f.growth),
         order_soon_days: Number(f.order_soon),
         overstock_factor: Number(f.overstock),
+        stockout_correction: !!f.stockout_correction,
       });
       toast('Settings saved — recommendations recomputed.');
       load(); refresh();
@@ -131,6 +133,16 @@ export function Templates({ refresh }: { refresh: () => void }) {
               Velocity = (w7 × 7-day rate) + (w30 × 30-day rate) + (w60 × 60-day rate) + (w90 × 90-day rate), then × growth multiplier.
               Heavier recent weights react faster to change; heavier long weights smooth out spikes.
             </div>
+            <label style={{ fontSize: 12.5, marginTop: 14, display: 'flex', gap: 8, alignItems: 'flex-start', maxWidth: 640 }}>
+              <input type="checkbox" style={{ marginTop: 2 }} checked={!!settingsForm.stockout_correction}
+                onChange={e => { setSettingsForm((f: any) => ({ ...f, stockout_correction: e.target.checked })); }} />
+              <span>
+                <b>Correct velocity for out-of-stock periods</b> (recommended). When a SKU is out of stock, Amazon's
+                recent sales look artificially low because it couldn't sell — so it would get under-ordered and stock out again.
+                With this on, velocity uses the item's best in-stock sales rate instead. Corrected SKUs show a{' '}
+                <span className="flag">stockout corrected</span> tag. Use “Save settings” above to apply.
+              </span>
+            </label>
           </>
         )}
       </div>

@@ -10,6 +10,7 @@ export function settingsRoutes(app: FastifyInstance): void {
       global_growth_multiplier: Number(getSetting(db, 'global_growth_multiplier') ?? '1'),
       order_soon_days: Number(getSetting(db, 'order_soon_days') ?? '7'),
       overstock_factor: Number(getSetting(db, 'overstock_factor') ?? '1.5'),
+      stockout_correction: (getSetting(db, 'stockout_correction') ?? '1') === '1',
       active_template_id: Number(getSetting(db, 'active_template_id') ?? 1),
     };
   });
@@ -48,6 +49,10 @@ export function settingsRoutes(app: FastifyInstance): void {
       const f = Number(b.overstock_factor);
       if (!Number.isFinite(f) || f < 1) return reply.code(400).send({ error: 'overstock_factor must be ≥ 1' });
       setSetting(db, 'overstock_factor', String(f));
+      changed = true;
+    }
+    if ('stockout_correction' in b) {
+      setSetting(db, 'stockout_correction', b.stockout_correction ? '1' : '0');
       changed = true;
     }
     if (changed) bumpRevision();

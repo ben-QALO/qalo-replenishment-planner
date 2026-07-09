@@ -43,7 +43,7 @@ test('integration: STOCKOUT beats everything; suppressed velocity flagged', () =
   }), TODAY);
   const r = one(out, 'OOS-1');
   assert.equal(r.status, 'STOCKOUT');
-  assert.ok(r.flags.includes('VELOCITY_SUPPRESSED'));
+  assert.ok(r.flags.includes('STOCKOUT_CORRECTED'));
   assert.ok(r.why.includes('ship now'));
   assert.ok(r.recommended_ship_qty > 0, 'stockout with warehouse stock must recommend a shipment');
 });

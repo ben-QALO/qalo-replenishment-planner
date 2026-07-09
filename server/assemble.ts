@@ -1,6 +1,6 @@
 // The only bridge between the database and the pure engine.
 import type Database from 'better-sqlite3';
-import type { EngineInput, EngineOutput, SkuSettings, SnapshotLine, TemplateParams } from '../engine/types.ts';
+import type { EngineInput, EngineOutput, SkuSettings, SnapshotLine, TemplateParams, StockoutDays } from '../engine/types.ts';
 import { computeRecommendations } from '../engine/index.ts';
 import { getRevision } from './db/connection.ts';
 
@@ -48,6 +48,49 @@ function airTemplate(db: Database.Database): TemplateParams | null {
     if (lead < bestLead) best = p;
   }
   return best;
+}
+
+/**
+ * Estimate out-of-stock days per trailing window from snapshot history. Snapshots are
+ * ~weekly, so each is treated as representative of the span until the next one (a step
+ * function). Returns days a SKU showed available==0 within each window ending at the
+ * latest snapshot date. Only SKUs with usable history appear in the map.
+ */
+export function computeStockoutDays(db: Database.Database, latestDate: string): Record<string, StockoutDays> {
+  const rows = db.prepare(`SELECT sl.sku, s.snapshot_date AS date, sl.available
+    FROM snapshot_lines sl JOIN snapshots s ON s.id = sl.snapshot_id
+    WHERE s.snapshot_date > date(?, '-90 days') AND s.snapshot_date <= ?
+    ORDER BY sl.sku, s.snapshot_date`).all(latestDate, latestDate) as { sku: string; date: string; available: number }[];
+
+  const bySku = new Map<string, { date: string; available: number }[]>();
+  for (const r of rows) {
+    if (!bySku.has(r.sku)) bySku.set(r.sku, []);
+    bySku.get(r.sku)!.push({ date: r.date, available: r.available });
+  }
+
+  const dayMs = 86_400_000;
+  const latest = new Date(`${latestDate}T00:00:00Z`).getTime();
+  const daysAgo = (d: string) => Math.round((latest - new Date(`${d}T00:00:00Z`).getTime()) / dayMs);
+
+  const out: Record<string, StockoutDays> = {};
+  for (const [sku, snaps] of bySku) {
+    if (snaps.length < 3) continue; // not enough history to estimate reliably
+    const acc: StockoutDays = { d7: 0, d30: 0, d60: 0, d90: 0, samples: snaps.length };
+    for (let i = 0; i < snaps.length; i++) {
+      if (snaps[i].available > 0) continue;
+      // This snapshot was OOS; it represents [this snapshot, next snapshot) days ago.
+      const start = daysAgo(snaps[i].date);
+      const end = i + 1 < snaps.length ? daysAgo(snaps[i + 1].date) : 0; // toward today
+      for (const [key, win] of [['d7', 7], ['d30', 30], ['d60', 60], ['d90', 90]] as const) {
+        // Overlap of the OOS span (end..start days ago) with the window (0..win days ago).
+        const lo = Math.max(end, 0);
+        const hi = Math.min(start, win);
+        if (hi > lo) acc[key] += hi - lo;
+      }
+    }
+    out[sku] = acc;
+  }
+  return out;
 }
 
 export function assembleEngineInput(db: Database.Database, overrideTemplateId?: number): EngineInput | null {
@@ -122,6 +165,8 @@ export function assembleEngineInput(db: Database.Database, overrideTemplateId?: 
     globalGrowthMultiplier: Number(getSetting(db, 'global_growth_multiplier') ?? '1'),
     orderSoonDays: Number(getSetting(db, 'order_soon_days') ?? '7'),
     overstockFactor: Number(getSetting(db, 'overstock_factor') ?? '1.5'),
+    stockoutCorrection: (getSetting(db, 'stockout_correction') ?? '1') === '1',
+    stockoutDays: computeStockoutDays(db, snapshot.snapshot_date),
   };
 }
 

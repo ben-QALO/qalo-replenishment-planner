@@ -62,6 +62,16 @@ export interface OpenPoLine {
   po_number?: string | null;
 }
 
+/**
+ * Days a SKU was out of stock within each trailing window, derived from snapshot
+ * history. `samples` is how many snapshots fell inside the 90-day lookback, so the
+ * engine can tell "no history" from "history says zero stockout days".
+ */
+export interface StockoutDays {
+  d7: number; d30: number; d60: number; d90: number;
+  samples: number;
+}
+
 export interface EngineInput {
   snapshotDate: string; // YYYY-MM-DD
   lines: SnapshotLine[];
@@ -78,6 +88,10 @@ export interface EngineInput {
   globalGrowthMultiplier: number;
   orderSoonDays: number;
   overstockFactor: number;
+  /** When true, correct velocity for stockout periods so OOS SKUs aren't under-ordered. */
+  stockoutCorrection: boolean;
+  /** Per-SKU stockout days by window, from snapshot history (optional). */
+  stockoutDays?: Record<string, StockoutDays>;
 }
 
 export type StatusTier =

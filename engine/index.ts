@@ -60,7 +60,10 @@ export function computeRecommendations(input: EngineInput, today: string): Engin
     }
 
     const { template, label } = resolveTemplate(settings, input.globalTemplate, input.globalTemplateName);
-    const vel = resolveVelocity(line, settings, input.weights, input.globalGrowthMultiplier);
+    const vel = resolveVelocity(
+      line, settings, input.weights, input.globalGrowthMultiplier,
+      input.stockoutCorrection, input.stockoutDays?.[sku],
+    );
     flags.push(...vel.flags);
     if (vel.velocity === null && (classification === 'replenishable' || classification === 'watch')) {
       flags.push('NO_VELOCITY');
@@ -104,7 +107,7 @@ export function computeRecommendations(input: EngineInput, today: string): Engin
     const price = line?.your_price ?? null;
     const dailyRevenue = (vel.velocity ?? 0) * (price ?? 0);
 
-    const { status, why } = assignStatus({
+    const { status, why: whyBase } = assignStatus({
       classification,
       velocity: vel.velocity,
       fba_available: positions.fba_available,
@@ -128,6 +131,11 @@ export function computeRecommendations(input: EngineInput, today: string): Engin
       flags,
       case_pack: settings?.case_pack,
     });
+
+    // Make the correction visible in the audit sentence so it's never a black box.
+    const why = flags.includes('STOCKOUT_CORRECTED')
+      ? `${whyBase} (Velocity uses this item's in-stock sales rate, not the stocked-out average, so it isn't under-ordered.)`
+      : whyBase;
 
     // Revenue-at-risk proxy: daily velocity × price × how deep the problem is.
     const depth = status === 'STOCKOUT' ? 30 : status === 'CRITICAL' ? Math.max(gapDays, 7)

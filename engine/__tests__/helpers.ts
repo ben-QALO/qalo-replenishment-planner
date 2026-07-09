@@ -47,6 +47,8 @@ export function input(overrides: Partial<EngineInput> = {}): EngineInput {
     globalGrowthMultiplier: 1.0,
     orderSoonDays: 7,
     overstockFactor: 1.5,
+    stockoutCorrection: true,
+    stockoutDays: {},
     ...overrides,
   };
 }
