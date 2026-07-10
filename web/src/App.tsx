@@ -8,6 +8,17 @@ import { Imports } from './pages/Imports.tsx';
 import { WarehousePos } from './pages/WarehousePos.tsx';
 import { Templates } from './pages/Templates.tsx';
 
+const SunIcon = () => (
+  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+    <circle cx="12" cy="12" r="4.5" /><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19" />
+  </svg>
+);
+const MoonIcon = () => (
+  <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
+    <path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z" />
+  </svg>
+);
+
 type Route = { page: string; sku?: string; params: URLSearchParams };
 
 function parseHash(): Route {
@@ -33,6 +44,13 @@ export function App() {
   const [meta, setMeta] = useState<DashMeta | null>(null);
   const [templates, setTemplates] = useState<{ id: number; name: string }[]>([]);
   const [drawerSku, setDrawerSku] = useState<string | null>(null);
+  const [theme, setTheme] = useState<'light' | 'dark'>(
+    () => (typeof document !== 'undefined' && document.documentElement.getAttribute('data-theme') === 'dark') ? 'dark' : 'light');
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    try { localStorage.setItem('qalo-theme', theme); } catch { /* ignore */ }
+  }, [theme]);
 
   const refresh = useCallback(() => setVersion(v => v + 1), []);
 
@@ -113,7 +131,12 @@ export function App() {
           <span>Template: <b>{meta?.active_template?.name ?? '—'}</b></span>
           <span>Warehouse: <b>{meta?.warehouse.last_updated ? meta.warehouse.last_updated.slice(0, 10) : 'no data'}</b></span>
           <span className="spacer" />
-          <a href="/api/exports/status.csv" style={{ color: 'var(--ink-2)' }}>Export full status ↓</a>
+          <a href="/api/exports/status.csv">Export full status ↓</a>
+          <button className="theme-toggle" onClick={() => setTheme(t => (t === 'dark' ? 'light' : 'dark'))}
+            title={theme === 'dark' ? 'Switch to light' : 'Switch to dark'} aria-label="Toggle theme">
+            <span className={theme === 'light' ? 'on' : ''}><SunIcon /></span>
+            <span className={theme === 'dark' ? 'on' : ''}><MoonIcon /></span>
+          </button>
         </div>
 
         {meta?.snapshot && meta.snapshot.age_days > 7 && (

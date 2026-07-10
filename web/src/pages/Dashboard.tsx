@@ -271,6 +271,7 @@ export function Dashboard({ data, worklist, refresh, openSku, go }: {
                       {isOpen && (
                         <tr className="q-detail">
                           <td colSpan={8}>
+                           <div className="q-detail-inner">
                             <div className="why">{r.why}</div>
                             <div className="math">
                               <div><div className="k">Velocity</div><div className="v">{fmtNum(r.velocity)}/day</div></div>
@@ -293,6 +294,7 @@ export function Dashboard({ data, worklist, refresh, openSku, go }: {
                                 <button className="btn sm" onClick={() => openSku(r.sku)}>Open full detail →</button>
                               </div>
                             </div>
+                           </div>
                           </td>
                         </tr>
                       )}
