@@ -15,6 +15,9 @@ Double-click **`start.command`**. The dashboard opens at http://localhost:8787.
 First run may take a minute (it sets up its own copy of Node.js inside the project
 folder — nothing is installed system-wide). If it fails, read `data/logs/start.log`.
 
+Use the sun/moon toggle in the top bar to switch between light and dark; your choice is
+remembered.
+
 ## First-time setup: scope your catalog
 
 Both source files carry a lot of noise (624 Amazon SKUs, ~8,200 NetSuite items) but you
@@ -68,16 +71,30 @@ never counted twice. Each unit is counted exactly once at every stage.
   sales rate (and, once weekly snapshots accumulate, divides sales by in-stock days
   only). Corrected SKUs carry a `stockout corrected` tag and say so in their audit
   sentence. Toggle under Templates & Settings → Velocity model.
-- **Ship to FBA** fires when FBA days-of-cover < (ship+check-in) + (review cadence) +
-  (safety days). Order-up-to that level, rounded to case packs, capped by warehouse stock.
-- **China PO** fires when *total pipeline* cover (FBA + warehouse + open POs) <
-  (China lead) + (PO cadence) + (safety). Applies MOQ and order multiples, and gives a
-  **place-by date** — miss it and the SKU goes CRITICAL.
+- **Reorder point vs. target — the key distinction.** Each leg has two numbers:
+  the **reorder point** (the floor that *triggers* action = lead + one cycle + safety)
+  and the **target** (the level it *refills to*). They are different: you top up *to the
+  target*, not merely back to the floor.
+- **Ship to FBA** fires when FBA days-of-cover drops below the reorder point
+  (warehouse→FBA + FBA cadence + safety). It then ships enough to bring FBA up to the
+  **FBA target** (default **120 days = 4 months**, editable per template/SKU), rounded to
+  case packs and capped by usable warehouse stock.
+- **China PO** fires when *total pipeline* cover (FBA + warehouse + in-transit + open POs)
+  drops below the PO reorder point (China lead + PO cadence + safety). It orders enough to
+  bring the whole pipeline up to the **total target** (default **150 days = 5 months**),
+  applies MOQ / order multiples, and gives a **place-by date** — miss it and the SKU goes
+  CRITICAL. The total target must exceed the FBA target so the warehouse holds reserve.
 - **CRITICAL** means: even if you act today, stock runs out before help can arrive.
   The tool shows how many stockout days air freight would save.
-- Every recommendation carries a one-sentence audit trail ("At 2.3/day, 115 units =
-  58 days of cover vs a 114-day reorder point → order 111"). If a number looks wrong,
-  open the SKU drawer and check the math.
+- Every recommendation carries a one-sentence audit trail ("At 21/day, 746 at/heading to
+  Amazon = 35 days of cover, below the 63-day reorder point → ship 1,776 to reach your
+  120-day FBA target"). If a number looks wrong, open the SKU drawer and check the math.
+
+**Current defaults (Ocean – standard template):** China lead ≈ 60 days (45 production +
+14 freight + 1 customs), warehouse→FBA 35 days (~5 weeks), safety 14 days, FBA cadence 14
+days, PO cadence 30 days, FBA target 120 days, total target 150 days. Velocity weights
+40 / 40 / 10 / 10 across the 7 / 30 / 60 / 90-day windows. All editable under Templates &
+Settings, where a plain-English glossary defines every field.
 
 ## Lead-time templates
 
