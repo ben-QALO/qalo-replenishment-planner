@@ -119,6 +119,28 @@ h1 { font-size: 21px; font-weight: 700; letter-spacing: -0.01em; margin-bottom: 
 h2 { font-size: 15px; font-weight: 650; margin: 26px 0 10px; }
 .h-sub { color: var(--muted); font-size: 13px; margin-bottom: 18px; }
 
+/* ── Needs-attention worklist ── */
+.worklist {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  background: var(--surface); border: 1px solid var(--hairline-2);
+  border-left: 4px solid #e9b44c;
+  border-radius: var(--r); padding: 10px 14px; margin: 6px 0 4px;
+  box-shadow: var(--shadow-1);
+}
+.worklist.clear { border-left-color: var(--ok); }
+.wl-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; color: var(--ink-2); margin-right: 4px; }
+.wl-clear { font-size: 13px; color: var(--ok); font-weight: 600; }
+.wl-item {
+  display: inline-flex; align-items: center; gap: 9px; cursor: pointer;
+  background: var(--surface-2); border: 1px solid var(--hairline); border-radius: 7px;
+  padding: 6px 11px 6px 9px; text-align: left;
+  transition: background 120ms, border-color 120ms;
+}
+.wl-item:hover { background: var(--paper); border-color: var(--wl-c); }
+.wl-item .wl-n { font-family: var(--mono); font-size: 20px; font-weight: 700; color: var(--wl-c); line-height: 1; }
+.wl-item .wl-lbl { font-size: 12px; font-weight: 600; color: var(--ink); line-height: 1.15; display: flex; flex-direction: column; }
+.wl-item .wl-lbl em { font-style: normal; font-weight: 400; font-size: 10.5px; color: var(--muted); }
+
 /* ── Severity tiles ── */
 .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(158px, 1fr)); gap: 12px; margin: 18px 0 8px; }
 .tile {

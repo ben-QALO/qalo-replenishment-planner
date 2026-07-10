@@ -5,7 +5,8 @@ export interface SkuResult {
   velocity: number | null; base_velocity: number | null;
   velocity_source: string; velocity_confidence: string; growth_multiplier: number;
   window_rates: { r7: number | null; r30: number | null; r60: number | null; r90: number | null };
-  fba_available: number; fba_reserved: number; fba_inbound: number; fba_position: number;
+  fba_available: number; fba_reserved: number; fba_inbound: number;
+  in_transit_to_fba: number; fba_coming: number; fba_position: number;
   warehouse_on_hand: number; open_po_units: number; total_pipeline: number; unfulfillable: number;
   your_price: number | null;
   fba_days_cover: number | null; pipeline_days_cover: number | null;

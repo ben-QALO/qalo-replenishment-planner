@@ -8,12 +8,14 @@ import { Imports } from './pages/Imports.tsx';
 import { WarehousePos } from './pages/WarehousePos.tsx';
 import { Templates } from './pages/Templates.tsx';
 
-type Route = { page: string; sku?: string };
+type Route = { page: string; sku?: string; params: URLSearchParams };
 
 function parseHash(): Route {
   const h = window.location.hash.replace(/^#\/?/, '');
-  if (h.startsWith('sku/')) return { page: 'skus', sku: decodeURIComponent(h.slice(4)) };
-  return { page: h || 'dashboard' };
+  const [path, query] = h.split('?');
+  const params = new URLSearchParams(query ?? '');
+  if (path.startsWith('sku/')) return { page: 'skus', sku: decodeURIComponent(path.slice(4)), params };
+  return { page: path || 'dashboard', params };
 }
 
 interface DashMeta {
@@ -21,6 +23,7 @@ interface DashMeta {
   snapshot: { snapshot_date: string; age_days: number; row_count: number; revision: number } | null;
   active_template: { id: number; name: string } | null;
   warehouse: { last_updated: string | null; sku_count: number };
+  worklist: any;
 }
 
 export function App() {
@@ -49,6 +52,8 @@ export function App() {
     api.get<DashMeta>('/api/dashboard').then(setMeta).catch(() => setMeta(null));
     api.get<{ templates: any[] }>('/api/templates').then(d => setTemplates(d.templates.map(t => ({ id: t.id, name: t.name })))).catch(() => {});
   }, [version]);
+
+  const go = useCallback((hash: string) => { window.location.hash = hash; }, []);
 
   const openSku = useCallback((sku: string) => {
     setDrawerSku(sku);
@@ -130,10 +135,10 @@ export function App() {
           </div>
         ) : (
           <>
-            {route.page === 'dashboard' && skus && <Dashboard data={skus} refresh={refresh} openSku={openSku} />}
-            {route.page === 'skus' && skus && <AllSkus data={skus} refresh={refresh} openSku={openSku} />}
+            {route.page === 'dashboard' && skus && <Dashboard data={skus} worklist={meta?.worklist ?? null} refresh={refresh} openSku={openSku} go={go} />}
+            {route.page === 'skus' && skus && <AllSkus data={skus} refresh={refresh} openSku={openSku} initialStatus={route.params.get('status')} />}
             {route.page === 'imports' && <Imports refresh={refresh} />}
-            {route.page === 'warehouse' && skus && <WarehousePos data={skus} refresh={refresh} />}
+            {route.page === 'warehouse' && skus && <WarehousePos data={skus} refresh={refresh} initialTab={route.params.get('tab')} />}
             {route.page === 'templates' && <Templates refresh={refresh} />}
           </>
         )}

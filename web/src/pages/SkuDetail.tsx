@@ -106,8 +106,9 @@ export function SkuDetail({ sku, today, templates, refresh }: {
                 <dl className="kv">
                   <dt>Available at FBA</dt><dd>{fmtInt(r.fba_available)}</dd>
                   <dt>Reserved</dt><dd>{fmtInt(r.fba_reserved)}</dd>
-                  <dt>Inbound to FBA</dt><dd>{fmtInt(r.fba_inbound)}</dd>
-                  <dt>Warehouse on hand</dt><dd>{fmtInt(r.warehouse_on_hand)}</dd>
+                  <dt>Inbound (Amazon)</dt><dd>{fmtInt(r.fba_inbound)}</dd>
+                  <dt>In transit to FBA</dt><dd>{fmtInt(r.in_transit_to_fba)}{r.in_transit_to_fba > 0 && r.in_transit_to_fba > r.fba_inbound ? ' (awaiting reconcile)' : ''}</dd>
+                  <dt>Warehouse usable</dt><dd>{fmtInt(r.warehouse_on_hand)}</dd>
                   <dt>On open POs</dt><dd>{fmtInt(r.open_po_units)}</dd>
                   <dt>Total pipeline</dt><dd><b>{fmtInt(r.total_pipeline)}</b></dd>
                   <dt>FBA days of cover</dt><dd>{fmtNum(r.fba_days_cover, 0)} (reorder at {r.fba_rop_days})</dd>

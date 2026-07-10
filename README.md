@@ -15,18 +15,45 @@ Double-click **`start.command`**. The dashboard opens at http://localhost:8787.
 First run may take a minute (it sets up its own copy of Node.js inside the project
 folder — nothing is installed system-wide). If it fails, read `data/logs/start.log`.
 
+## First-time setup: scope your catalog
+
+Both source files carry a lot of noise (624 Amazon SKUs, ~8,200 NetSuite items) but you
+only stock a few hundred products. On the **Imports** page, paste your list of ASINs (or
+SKUs) into **"Products to keep in stock"** and Apply. Everything on the list becomes
+replenishable; everything else is set to ignore and drops out of every view. Re-run it
+anytime the list changes. New products that appear in a later import and aren't on the
+list are surfaced for a keep/ignore decision rather than silently dropped.
+
 ## The operating rhythm
 
-The tool works when the data is fresh. Three habits:
+Each planning session (~every 2 weeks), on the **Imports** page drop **both** files:
+the Amazon FBA Inventory export and your NetSuite warehouse report (Qalo Amazon Inventory
+Report). Then work the **Action Center** top-down:
 
-| When | Who | What |
-|---|---|---|
-| **Every Monday** (~5 min) | Marketplace analyst | Download the FBA Inventory export from Seller Central → drop it on the **Imports** page → classify any new SKUs it finds. |
-| **Every FBA shipment day** (~15 min, biweekly) | Ops | Open the **Action Center** → review the *Ship to FBA* queue → adjust quantities if needed → **Export shipment plan** (paste-ready for Send to Amazon) → confirm the warehouse deduction. |
-| **Every PO cycle** (~30 min, monthly) | Director | Review the *Next China PO* queue (sorted by place-by date — the top rows are burning) → adjust → **Export PO proposal** → send to the manufacturer → create the draft PO so the pipeline math sees it. When goods arrive, use **Receive** on the PO to add them to warehouse stock. |
+1. **Needs your attention** (the band at the top) — clear it first. It counts, and links
+   straight to, every open task: transfers to reconcile, POs to update, new products to
+   classify, SKUs missing a sales rate. When it's empty, the numbers below are trustworthy.
+2. **Ship to FBA** queue → adjust quantities → **Submit transfer request.** This drops the
+   units from usable warehouse stock immediately and downloads the request file to send to
+   the inventory team. The units now show as *in transit to FBA* so they're never re-shipped.
+3. **Next China PO** queue (sorted by place-by date — top rows are burning) → **Export PO
+   proposal** → send to the manufacturer → create the draft PO so the pipeline sees it.
 
-Also: whenever warehouse counts change outside the tool, update them under
-**Warehouse & POs** (inline edit, or paste `SKU,qty` lines).
+**Next session — reconcile.** The transfers you submitted last time sit under
+**Warehouse → Transfers to FBA** (and in the attention band). Once you've confirmed a
+shipment was created and is inbound in Amazon, hit **Reconcile** to close it. Nothing moves
+status on its own — you own every step; the tool only counts and flags.
+
+Warehouse stock and China POs are the two things Amazon can't see, so the tool relies on
+your NetSuite import and your PO status marks to keep the pipeline honest.
+
+### How transfers stay counted (no invisible inventory)
+
+Because NetSuite drops warehouse on-hand when the transfer order is created — well before
+the goods reach Amazon — a transfer's units would otherwise vanish during the prep-center
+gap. The tool prevents that: from **Submit** until **Reconcile**, the units are held in an
+in-transit ledger and counted in your pipeline, and warehouse-side they're netted so they're
+never counted twice. Each unit is counted exactly once at every stage.
 
 ## How the math works (so you can trust it)
 

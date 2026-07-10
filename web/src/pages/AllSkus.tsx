@@ -8,11 +8,11 @@ const CLASSES = ['unclassified', 'replenishable', 'watch', 'discontinued', 'igno
 
 type SortKey = keyof SkuResult | 'none';
 
-export function AllSkus({ data, refresh, openSku }: {
-  data: SkusResponse; refresh: () => void; openSku: (sku: string) => void;
+export function AllSkus({ data, refresh, openSku, initialStatus }: {
+  data: SkusResponse; refresh: () => void; openSku: (sku: string) => void; initialStatus?: string | null;
 }) {
   const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState<string | null>(null);
+  const [statusFilter, setStatusFilter] = useState<string | null>(initialStatus ?? null);
   const [classFilter, setClassFilter] = useState<string | null>(null);
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: 'none', dir: 1 });
   const [selected, setSelected] = useState<Set<string>>(new Set());

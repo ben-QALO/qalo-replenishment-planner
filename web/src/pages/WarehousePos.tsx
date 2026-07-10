@@ -2,18 +2,124 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { api, fmtInt, type SkusResponse } from '../api.ts';
 import { toast } from '../components/ui.tsx';
 
-export function WarehousePos({ data, refresh }: { data: SkusResponse; refresh: () => void }) {
-  const [tab, setTab] = useState<'warehouse' | 'pos'>('warehouse');
+export function WarehousePos({ data, refresh, initialTab }: { data: SkusResponse; refresh: () => void; initialTab?: string | null }) {
+  const [tab, setTab] = useState<'warehouse' | 'transfers' | 'pos'>(
+    initialTab === 'transfers' || initialTab === 'pos' ? initialTab : 'warehouse');
   return (
     <div className="page">
-      <h1>Warehouse & China POs</h1>
-      <div className="h-sub">The two things Amazon can't see: your US warehouse stock and what's on order from China. Keep these current and the recommendations stay honest.</div>
+      <h1>Warehouse, Transfers & China POs</h1>
+      <div className="h-sub">The things Amazon can't see: your US warehouse stock, transfers in flight to FBA, and what's on order from China. Keep these current and the recommendations stay honest.</div>
       <div className="tabs">
         <button className={tab === 'warehouse' ? 'on' : ''} onClick={() => setTab('warehouse')}>US Warehouse</button>
-        <button className={tab === 'pos' ? 'on' : ''} onClick={() => setTab('pos')}>Purchase Orders</button>
+        <button className={tab === 'transfers' ? 'on' : ''} onClick={() => setTab('transfers')}>Transfers to FBA</button>
+        <button className={tab === 'pos' ? 'on' : ''} onClick={() => setTab('pos')}>China POs</button>
       </div>
-      {tab === 'warehouse' ? <Warehouse data={data} refresh={refresh} /> : <Pos refresh={refresh} />}
+      {tab === 'warehouse' && <Warehouse data={data} refresh={refresh} />}
+      {tab === 'transfers' && <Transfers refresh={refresh} openSku={undefined} />}
+      {tab === 'pos' && <Pos refresh={refresh} />}
     </div>
+  );
+}
+
+const TRANSFER_STATUS_META: Record<string, { c: string; bg: string; label: string }> = {
+  submitted: { c: 'var(--po)', bg: 'var(--po-bg)', label: 'in transit to FBA' },
+  reconciled: { c: 'var(--ok)', bg: 'var(--ok-bg)', label: 'reconciled' },
+  cancelled: { c: 'var(--neutral)', bg: 'var(--neutral-bg)', label: 'cancelled' },
+  draft: { c: 'var(--atrisk)', bg: 'var(--atrisk-bg)', label: 'draft' },
+};
+
+function Transfers({ refresh }: { refresh: () => void; openSku?: (sku: string) => void }) {
+  const [transfers, setTransfers] = useState<any[]>([]);
+  const [sel, setSel] = useState<Set<number>>(new Set());
+  const load = () => api.get<{ transfers: any[] }>('/api/transfers').then(d => setTransfers(d.transfers));
+  useEffect(() => { load(); }, []);
+
+  const open = transfers.filter(t => t.status === 'submitted');
+  const closed = transfers.filter(t => t.status !== 'submitted');
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const ageDays = (d: string | null) => d ? Math.round((Date.parse(todayStr) - Date.parse(d.slice(0, 10))) / 86400000) : 0;
+
+  async function reconcile(ids: number[]) {
+    if (ids.length === 0) return;
+    try {
+      await api.post('/api/transfers/reconcile-bulk', { ids });
+      toast(`${ids.length} transfer(s) reconciled.`);
+      setSel(new Set()); load(); refresh();
+    } catch (err: any) { toast(err.message); }
+  }
+  async function cancel(id: number) {
+    if (!window.confirm('Cancel this transfer? Its units return to usable warehouse stock.')) return;
+    try { await api.post(`/api/transfers/${id}/cancel`); load(); refresh(); } catch (err: any) { toast(err.message); }
+  }
+
+  return (
+    <>
+      <div className="toolbar">
+        <span style={{ fontSize: 12.5, color: 'var(--muted)' }}>
+          Transfers you've submitted stay here until you confirm they're created and inbound in Amazon, then reconcile to close them.
+        </span>
+        <div style={{ flex: 1 }} />
+        {sel.size > 0 && <button className="btn primary sm" onClick={() => reconcile([...sel])}>Reconcile {sel.size} selected</button>}
+      </div>
+
+      <div className="card">
+        <div className="card-head"><h3>Open — awaiting reconciliation ({open.length})</h3></div>
+        {open.length === 0 ? <div className="empty">No transfers in flight. Submit one from the Action Center.</div> : (
+          <table className="data">
+            <thead><tr>
+              <th className="plain" style={{ width: 32 }}>
+                <input type="checkbox" checked={open.length > 0 && open.every(t => sel.has(t.id))}
+                  onChange={e => setSel(e.target.checked ? new Set(open.map(t => t.id)) : new Set())} />
+              </th>
+              <th className="plain">SKU</th><th className="num">Qty</th><th className="plain">Submitted</th>
+              <th className="plain">Age</th><th className="plain">Status</th><th className="plain"></th>
+            </tr></thead>
+            <tbody>
+              {open.map(t => {
+                const age = ageDays(t.submitted_at);
+                const m = TRANSFER_STATUS_META[t.status];
+                return (
+                  <tr key={t.id}>
+                    <td><input type="checkbox" checked={sel.has(t.id)} onChange={e => setSel(prev => {
+                      const n = new Set(prev); e.target.checked ? n.add(t.id) : n.delete(t.id); return n;
+                    })} /></td>
+                    <td><span className="sku-code">{t.sku}</span><div className="cell-title" style={{ maxWidth: 320 }}>{t.title}</div></td>
+                    <td className="num">{fmtInt(t.qty)}</td>
+                    <td className="mono" style={{ fontSize: 11.5 }}>{t.submitted_at?.slice(0, 10)}</td>
+                    <td className="mono" style={{ fontSize: 11.5, color: age >= 14 ? 'var(--atrisk)' : 'var(--muted)', fontWeight: age >= 14 ? 700 : 400 }}>
+                      {age}d{age >= 14 ? ' ⚠' : ''}</td>
+                    <td><span className="badge" style={{ ['--b-c' as any]: m.c, ['--b-bg' as any]: m.bg }}>{m.label}</span></td>
+                    <td style={{ whiteSpace: 'nowrap' }}>
+                      <button className="btn sm primary" onClick={() => reconcile([t.id])}>Reconcile</button>{' '}
+                      <button className="btn sm" onClick={() => cancel(t.id)}>Cancel</button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {closed.length > 0 && (
+        <div className="card" style={{ marginTop: 14 }}>
+          <div className="card-head"><h3>Recently reconciled</h3></div>
+          <table className="data">
+            <thead><tr><th className="plain">SKU</th><th className="num">Qty</th><th className="plain">Submitted</th><th className="plain">Reconciled</th></tr></thead>
+            <tbody>
+              {closed.slice(0, 40).map(t => (
+                <tr key={t.id}>
+                  <td className="sku-code">{t.sku}</td>
+                  <td className="num">{fmtInt(t.qty)}</td>
+                  <td className="mono" style={{ fontSize: 11.5 }}>{t.submitted_at?.slice(0, 10)}</td>
+                  <td className="mono" style={{ fontSize: 11.5 }}>{t.reconciled_at?.slice(0, 10) ?? '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </>
   );
 }
 

@@ -4,8 +4,14 @@ import { StatusBadge, Flags, Tile, toast, downloadCsv } from '../components/ui.t
 
 type QueueKey = 'ship' | 'po' | 'risk';
 
-export function Dashboard({ data, refresh, openSku }: {
-  data: SkusResponse; refresh: () => void; openSku: (sku: string) => void;
+interface Worklist {
+  transfers_to_reconcile: number; transfers_look_inbound: number; transfers_open_total: number;
+  pos_to_action: number; new_products: number; no_velocity: number; total: number;
+}
+
+export function Dashboard({ data, worklist, refresh, openSku, go }: {
+  data: SkusResponse; worklist: Worklist | null; refresh: () => void;
+  openSku: (sku: string) => void; go: (hash: string) => void;
 }) {
   const [queue, setQueue] = useState<QueueKey>('ship');
   const [edited, setEdited] = useState<Record<string, number>>({});
@@ -34,34 +40,39 @@ export function Dashboard({ data, refresh, openSku }: {
   const selectedRows = activeRows.filter(r => !unchecked[`${queue}:${r.sku}`] && qtyOf(r) > 0);
   const totalUnits = selectedRows.reduce((t, r) => t + qtyOf(r), 0);
 
-  async function exportPlan(kind: 'fba_shipment' | 'china_po') {
+  async function submitTransfers() {
+    if (selectedRows.length === 0) return;
+    if (!window.confirm(`Submit a transfer request for ${selectedRows.length} SKUs (${fmtInt(totalUnits)} units)?\n\nThis drops the units from usable warehouse stock now, and downloads the request file for the inventory team. You'll reconcile each one next session once it's inbound in Amazon.`)) return;
+    setBusy(true);
+    try {
+      const lines = selectedRows.map(r => ({ sku: r.sku, qty: qtyOf(r) }));
+      const res = await api.post<{ filename: string; csv: string; total_units: number }>('/api/transfers/submit', { lines });
+      downloadCsv(res.filename, res.csv);
+      toast(`Transfer request submitted — ${fmtInt(res.total_units)} units across ${lines.length} SKUs. Warehouse updated.`);
+      setEdited({}); setUnchecked({});
+      refresh();
+    } catch (err: any) {
+      toast(`Submit failed: ${err.message}`);
+    } finally { setBusy(false); }
+  }
+
+  async function exportPoProposal() {
     if (selectedRows.length === 0) return;
     setBusy(true);
     try {
-      const lines = selectedRows.map(r => ({
-        sku: r.sku,
-        qty_recommended: kind === 'fba_shipment' ? r.recommended_ship_qty : r.recommended_po_qty,
-        qty_final: qtyOf(r),
-      }));
-      const res = await api.post<{ id: number; filename: string; csv: string; total_units: number }>('/api/plans', { kind, lines });
+      const lines = selectedRows.map(r => ({ sku: r.sku, qty_recommended: r.recommended_po_qty, qty_final: qtyOf(r) }));
+      const res = await api.post<{ id: number; filename: string; csv: string; total_units: number }>('/api/plans', { kind: 'china_po', lines });
       downloadCsv(res.filename, res.csv);
       toast(`${res.filename} — ${fmtInt(res.total_units)} units across ${lines.length} SKUs`);
-      if (kind === 'fba_shipment' && window.confirm('Deduct these shipped units from warehouse on-hand?')) {
-        await api.post(`/api/plans/${res.id}/deduct-warehouse`);
-        toast('Warehouse quantities updated.');
-      }
-      if (kind === 'china_po' && window.confirm('Also create a draft purchase order from this proposal?')) {
+      if (window.confirm('Also create a draft purchase order from this proposal?')) {
         await api.post(`/api/plans/${res.id}/create-po`);
         toast('Draft PO created — set its number and ETA under Warehouse & POs.');
       }
-      setEdited({});
-      setUnchecked({});
+      setEdited({}); setUnchecked({});
       refresh();
     } catch (err: any) {
       toast(`Export failed: ${err.message}`);
-    } finally {
-      setBusy(false);
-    }
+    } finally { setBusy(false); }
   }
 
   async function quickFix(r: SkuResult, action: string) {
@@ -79,10 +90,35 @@ export function Dashboard({ data, refresh, openSku }: {
 
   if (!s) return null;
 
+  const wl = worklist;
+  const wlItems = wl ? [
+    { n: wl.transfers_to_reconcile, label: 'transfers to reconcile', hint: 'confirm created & inbound in Amazon', hash: '#/warehouse?tab=transfers', tone: 'var(--po)' },
+    { n: wl.transfers_look_inbound, label: 'look inbound — reconcile', hint: 'Amazon appears to show these', hash: '#/warehouse?tab=transfers', tone: 'var(--ship)' },
+    { n: wl.pos_to_action, label: 'POs to update', hint: 'draft to send, or overdue', hash: '#/warehouse?tab=pos', tone: 'var(--atrisk)' },
+    { n: wl.new_products, label: 'new products to classify', hint: 'keep or ignore', hash: '#/skus?status=UNCLASSIFIED', tone: 'var(--atrisk)' },
+    { n: wl.no_velocity, label: 'missing sales velocity', hint: 'set an expected rate', hash: '#/skus?status=AT_RISK', tone: 'var(--stockout)' },
+  ].filter(i => i.n > 0) : [];
+
   return (
     <div className="page">
       <h1>Action Center</h1>
       <div className="h-sub">What needs a decision today, worst first. Every number can be audited on the SKU page.</div>
+
+      <div className={`worklist${wlItems.length === 0 ? ' clear' : ''}`}>
+        {wlItems.length === 0 ? (
+          <span className="wl-clear">✓ Nothing to reconcile or update — the numbers below are current.</span>
+        ) : (
+          <>
+            <span className="wl-title">Needs your attention</span>
+            {wlItems.map((i, idx) => (
+              <button key={idx} className="wl-item" style={{ ['--wl-c' as any]: i.tone }} onClick={() => go(i.hash)}>
+                <span className="wl-n">{fmtInt(i.n)}</span>
+                <span className="wl-lbl">{i.label}<em>{i.hint}</em></span>
+              </button>
+            ))}
+          </>
+        )}
+      </div>
 
       <div className="tiles">
         <Tile n={s.stockout} label="Stocked out" color="var(--stockout)" sub="selling, zero available" onClick={() => setQueue('ship')} />
@@ -107,8 +143,8 @@ export function Dashboard({ data, refresh, openSku }: {
                 {selectedRows.length} SKUs · {fmtInt(totalUnits)} units
               </span>
               <button className="btn primary" disabled={busy || selectedRows.length === 0}
-                onClick={() => exportPlan(queue === 'ship' ? 'fba_shipment' : 'china_po')}>
-                {queue === 'ship' ? 'Export shipment plan' : 'Export PO proposal'}
+                onClick={queue === 'ship' ? submitTransfers : exportPoProposal}>
+                {queue === 'ship' ? 'Submit transfer request' : 'Export PO proposal'}
               </button>
             </>
           )}

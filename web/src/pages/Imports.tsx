@@ -19,6 +19,33 @@ export function Imports({ refresh }: { refresh: () => void }) {
   const [committed, setCommitted] = useState<{ newSkus: string[] } | null>(null);
   const [history, setHistory] = useState<any[]>([]);
   const [triageSel, setTriageSel] = useState<Set<string>>(new Set());
+  const [whOver, setWhOver] = useState(false);
+  const [whResult, setWhResult] = useState<any | null>(null);
+  const [keep, setKeep] = useState<{ entries: any[]; count: number; kept_skus: number; ignored_skus: number } | null>(null);
+  const [keepText, setKeepText] = useState('');
+
+  const loadKeep = () => api.get<any>('/api/keep-list').then(setKeep).catch(() => {});
+  useEffect(() => { loadKeep(); }, []);
+
+  async function importWarehouse(file: File) {
+    setBusy(true); setWhResult(null);
+    try {
+      const res = await api.upload<any>('/api/warehouse/import', file);
+      setWhResult(res);
+      toast(`Warehouse updated — ${res.matched} SKUs matched (${res.with_stock} with stock).`);
+      refresh();
+    } catch (err: any) { toast(`Warehouse import failed: ${err.message}`); } finally { setBusy(false); }
+  }
+
+  async function applyKeep() {
+    if (!keepText.trim()) { toast('Paste your ASINs or SKUs first.'); return; }
+    setBusy(true);
+    try {
+      const res = await api.post<any>('/api/keep-list', { text: keepText });
+      toast(`Keep list applied — ${res.kept_skus} SKUs kept, ${res.ignored_skus} ignored${res.not_found.length ? `, ${res.not_found.length} not found` : ''}.`);
+      setKeepText(''); loadKeep(); refresh();
+    } catch (err: any) { toast(err.message); } finally { setBusy(false); }
+  }
 
   const loadHistory = () => api.get<{ imports: any[] }>('/api/imports').then(d => setHistory(d.imports));
   useEffect(() => { loadHistory(); }, []);
@@ -74,23 +101,71 @@ export function Imports({ refresh }: { refresh: () => void }) {
     <div className="page">
       <h1>Imports</h1>
       <div className="h-sub">
-        Drop the FBA Inventory export here weekly (Seller Central → Inventory → Inventory Planning → download, or the report your team already pulls). Each import becomes a dated snapshot.
+        Each planning session, drop both files: the Amazon FBA Inventory export and your NetSuite warehouse report. Then submit your transfers from the Action Center.
       </div>
 
-      <div
-        className={`dropzone${over ? ' over' : ''}`}
-        onDragOver={e => { e.preventDefault(); setOver(true); }}
-        onDragLeave={() => setOver(false)}
-        onDrop={e => { e.preventDefault(); setOver(false); const f = e.dataTransfer.files[0]; if (f) handleFile(f); }}
-        onClick={() => {
-          const input = document.createElement('input');
-          input.type = 'file';
-          input.accept = '.csv,.txt,.tsv';
-          input.onchange = () => { if (input.files?.[0]) handleFile(input.files[0]); };
-          input.click();
-        }}
-      >
-        {busy ? 'Working…' : <><b>Drop your FBA Inventory export</b> (.csv / .txt) — or click to choose a file</>}
+      <div className="grid-2">
+        <div>
+          <h2 style={{ marginTop: 4 }}>1 · Amazon FBA export</h2>
+          <div
+            className={`dropzone${over ? ' over' : ''}`}
+            onDragOver={e => { e.preventDefault(); setOver(true); }}
+            onDragLeave={() => setOver(false)}
+            onDrop={e => { e.preventDefault(); setOver(false); const f = e.dataTransfer.files[0]; if (f) handleFile(f); }}
+            onClick={() => {
+              const input = document.createElement('input');
+              input.type = 'file';
+              input.accept = '.csv,.txt,.tsv';
+              input.onchange = () => { if (input.files?.[0]) handleFile(input.files[0]); };
+              input.click();
+            }}
+          >
+            {busy ? 'Working…' : <><b>Drop your FBA Inventory export</b> (.csv / .txt)</>}
+          </div>
+        </div>
+        <div>
+          <h2 style={{ marginTop: 4 }}>2 · NetSuite warehouse report</h2>
+          <div
+            className={`dropzone${whOver ? ' over' : ''}`}
+            onDragOver={e => { e.preventDefault(); setWhOver(true); }}
+            onDragLeave={() => setWhOver(false)}
+            onDrop={e => { e.preventDefault(); setWhOver(false); const f = e.dataTransfer.files[0]; if (f) importWarehouse(f); }}
+            onClick={() => {
+              const input = document.createElement('input');
+              input.type = 'file';
+              input.accept = '.xls,.xml';
+              input.onchange = () => { if (input.files?.[0]) importWarehouse(input.files[0]); };
+              input.click();
+            }}
+          >
+            {busy ? 'Working…' : <><b>Drop your NetSuite warehouse report</b> (Qalo Amazon Inventory Report .xls)</>}
+          </div>
+          {whResult && (
+            <div className="card" style={{ marginTop: 10, padding: '10px 14px', fontSize: 12.5 }}>
+              <b>{whResult.matched}</b> SKUs matched from the <span className="mono">{whResult.qty_column}</span> column ({whResult.with_stock} with stock).
+              {whResult.tracked_missing_count > 0 && (
+                <div style={{ color: 'var(--atrisk)', marginTop: 4 }}>
+                  {whResult.tracked_missing_count} tracked SKUs weren't in this file (treated as 0 on-hand): {whResult.tracked_missing_sample.slice(0, 6).join(', ')}{whResult.tracked_missing_count > 6 ? '…' : ''}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="card" style={{ margin: '18px 0', padding: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 12 }}>
+          <h3 style={{ fontSize: 14, fontWeight: 650 }}>Products to keep in stock</h3>
+          {keep && <span style={{ fontSize: 12, color: 'var(--muted)' }}>{keep.count} on the list · {keep.kept_skus} SKUs kept · {keep.ignored_skus} ignored</span>}
+        </div>
+        <div style={{ fontSize: 12.5, color: 'var(--muted)', margin: '6px 0 10px' }}>
+          Paste the ASINs (or SKUs) you actually stock — one per line, or comma-separated. Everything on the list becomes replenishable; everything else is set to ignore so it drops out of every view. Re-runnable anytime.
+        </div>
+        <textarea className="field" style={{ width: '100%', minHeight: 90, fontFamily: 'var(--mono)', fontSize: 12 }}
+          placeholder={'B0XXXXXXXX\nB0YYYYYYYY\n… or paste SKUs'} value={keepText} onChange={e => setKeepText(e.target.value)} />
+        <div style={{ marginTop: 8 }}>
+          <button className="btn primary sm" disabled={busy} onClick={applyKeep}>Apply keep list</button>
+        </div>
       </div>
 
       {preview && (
