@@ -69,7 +69,9 @@ export function computeRecommendations(input: EngineInput, today: string): Engin
       flags.push('NO_VELOCITY');
     }
 
-    const positions = computePositions(line, input.warehouse[sku] ?? 0, poBySku.get(sku) ?? []);
+    const positions = computePositions(
+      line, input.warehouse[sku] ?? 0, poBySku.get(sku) ?? [], input.inTransitToFba?.[sku] ?? 0,
+    );
     if (positions.unfulfillable >= 5 && line && positions.unfulfillable / Math.max(1, positions.fba_position + positions.unfulfillable) > 0.05) {
       flags.push('UNSELLABLE_HIGH');
     }
@@ -158,6 +160,8 @@ export function computeRecommendations(input: EngineInput, today: string): Engin
       fba_available: positions.fba_available,
       fba_reserved: positions.fba_reserved,
       fba_inbound: positions.fba_inbound,
+      in_transit_to_fba: positions.in_transit_to_fba,
+      fba_coming: positions.fba_coming,
       fba_position: positions.fba_position,
       warehouse_on_hand: positions.warehouse_on_hand,
       open_po_units: positions.open_po_units,

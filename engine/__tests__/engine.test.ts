@@ -220,6 +220,31 @@ test('results are sorted worst-tier first, then by risk score', () => {
   assert.deepEqual(out.results.map(r => r.sku), ['OOS-DEAR', 'OOS-CHEAP', 'OK-A']);
 });
 
+test('open transfer suppresses re-recommending the same units, and total pipeline is unchanged', () => {
+  // Low-but-in-stock SKU, 2/day. Warehouse already netted to 300 (500 committed), 500 in transit.
+  const withTransfer = computeRecommendations(input({
+    lines: [line({ sku: 'T-1', available: 40, ...steady(2) })],
+    skuSettings: { 'T-1': settings() },
+    warehouse: { 'T-1': 100 },
+    inTransitToFba: { 'T-1': 200 },
+  }), TODAY);
+  const r = one(withTransfer, 'T-1');
+  // 40 available + 200 coming = 120 days FBA cover; pipeline 340 = 170 days → OK, no re-ship.
+  assert.equal(r.fba_coming, 200);
+  assert.equal(r.recommended_ship_qty, 0, 'should not re-transfer units already in flight');
+  assert.equal(r.status, 'OK');
+
+  // Baseline (same units, but all still at warehouse, no transfer): same total pipeline, WOULD ship.
+  const baseline = computeRecommendations(input({
+    lines: [line({ sku: 'T-1', available: 40, ...steady(2) })],
+    skuSettings: { 'T-1': settings() },
+    warehouse: { 'T-1': 300 },
+  }), TODAY);
+  const b = one(baseline, 'T-1');
+  assert.equal(b.total_pipeline, r.total_pipeline, 'submitting a transfer must not change total pipeline');
+  assert.ok(b.recommended_ship_qty > 0, 'without the transfer it should recommend shipping');
+});
+
 test('parse flags propagate to DATA_SUSPECT', () => {
   const out = computeRecommendations(input({
     lines: [line({ sku: 'SUS-1', available: 10, ...steady(1), parse_flags: ['NEGATIVE_QTY_ZEROED'] })],

@@ -13,6 +13,8 @@ import { poRoutes } from './routes/pos.ts';
 import { templateRoutes } from './routes/templates.ts';
 import { settingsRoutes } from './routes/settings.ts';
 import { planRoutes } from './routes/plans.ts';
+import { transferRoutes } from './routes/transfers.ts';
+import { keepListRoutes } from './routes/keeplist.ts';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const WEB_DIST = join(ROOT, 'web', 'dist');
@@ -32,6 +34,8 @@ poRoutes(app);
 templateRoutes(app);
 settingsRoutes(app);
 planRoutes(app);
+transferRoutes(app);
+keepListRoutes(app);
 
 if (existsSync(join(WEB_DIST, 'index.html'))) {
   await app.register(fastifyStatic, { root: WEB_DIST });

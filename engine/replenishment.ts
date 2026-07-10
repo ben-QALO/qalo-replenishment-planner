@@ -6,9 +6,11 @@ export const COVER_CAP = 9999;
 export interface Positions {
   fba_available: number;
   fba_reserved: number;
-  fba_inbound: number;
-  fba_position: number;
-  warehouse_on_hand: number;
+  fba_inbound: number;      // Amazon's reported inbound (working+shipped+received)
+  in_transit_to_fba: number; // open warehouse→FBA transfers not yet reconciled
+  fba_coming: number;       // max(amazon inbound, in-transit) — each unit counted once
+  fba_position: number;     // available + reserved + fba_coming
+  warehouse_on_hand: number; // already netted of unreflected transfers
   open_po_units: number;
   total_pipeline: number;
   unfulfillable: number;
@@ -18,16 +20,24 @@ export function computePositions(
   line: SnapshotLine | null,
   warehouseOnHand: number,
   poLines: OpenPoLine[],
+  inTransitToFba = 0,
 ): Positions {
   const available = line?.available ?? 0;
   const reserved = line?.reserved ?? 0;
-  const inbound = (line?.inbound_working ?? 0) + (line?.inbound_shipped ?? 0) + (line?.inbound_received ?? 0);
-  const fba_position = available + reserved + inbound;
+  const amazonInbound = (line?.inbound_working ?? 0) + (line?.inbound_shipped ?? 0) + (line?.inbound_received ?? 0);
+  // Units on an open transfer and units Amazon already shows inbound are the SAME units
+  // at different points in the pipeline. Taking the MAX (never the sum) counts each once:
+  // while transfers exceed what Amazon shows, we cover the invisible prep gap; once Amazon
+  // catches up, we defer to Amazon. No double-count regardless of file/reconcile timing.
+  const fba_coming = Math.max(amazonInbound, inTransitToFba);
+  const fba_position = available + reserved + fba_coming;
   const open_po_units = poLines.reduce((s, l) => s + Math.max(0, l.qty_outstanding), 0);
   return {
     fba_available: available,
     fba_reserved: reserved,
-    fba_inbound: inbound,
+    fba_inbound: amazonInbound,
+    in_transit_to_fba: inTransitToFba,
+    fba_coming,
     fba_position,
     warehouse_on_hand: warehouseOnHand,
     open_po_units,

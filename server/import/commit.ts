@@ -2,6 +2,7 @@
 // log the import, bump the state revision. All-or-nothing.
 import type Database from 'better-sqlite3';
 import type { NormalizedLine } from './fba.ts';
+import { autoClassifyNewSkus } from '../keeplist.ts';
 
 export interface CommitInput {
   snapshotDate: string; // YYYY-MM-DD
@@ -88,6 +89,10 @@ export function commitSnapshot(db: Database.Database, input: CommitInput): Commi
         input.rowsTotal, input.lines.length, input.rowsSkipped,
         newSkus.length, JSON.stringify(input.warnings), snapshotId,
       );
+
+    // Freshly-seen SKUs that are on the keep list become replenishable immediately;
+    // the rest stay unclassified for triage.
+    autoClassifyNewSkus(db, newSkus);
 
     db.prepare('UPDATE state_revision SET rev = rev + 1 WHERE id = 1').run();
 

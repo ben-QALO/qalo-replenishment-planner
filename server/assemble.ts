@@ -137,9 +137,28 @@ export function assembleEngineInput(db: Database.Database, overrideTemplateId?: 
     };
   }
 
+  // Warehouse on-hand, netted of transfers the latest import hasn't reflected yet.
+  // A transfer submitted AFTER the newest warehouse update isn't in that file's numbers,
+  // so we subtract it (this is what makes inventory "drop in the tool" at submit); a
+  // transfer submitted before it is already reflected, so we leave it (no double-count).
+  const cutoffRow = db.prepare('SELECT MAX(updated_at) AS cutoff FROM warehouse_inventory').get() as { cutoff: string | null };
+  const cutoff = cutoffRow?.cutoff ?? '';
+  const openTransfers = db.prepare(
+    "SELECT sku, qty, submitted_at FROM transfers WHERE status = 'submitted'").all() as { sku: string; qty: number; submitted_at: string | null }[];
+  const inTransitToFba: Record<string, number> = {};
+  const unreflected: Record<string, number> = {};
+  for (const t of openTransfers) {
+    inTransitToFba[t.sku] = (inTransitToFba[t.sku] ?? 0) + t.qty;
+    if (!cutoff || (t.submitted_at ?? '') > cutoff) unreflected[t.sku] = (unreflected[t.sku] ?? 0) + t.qty;
+  }
+
   const warehouse: Record<string, number> = {};
   for (const r of db.prepare('SELECT sku, qty_on_hand FROM warehouse_inventory').all() as any[]) {
-    warehouse[r.sku] = r.qty_on_hand;
+    warehouse[r.sku] = Math.max(0, r.qty_on_hand - (unreflected[r.sku] ?? 0));
+  }
+  // Transfers on SKUs with no warehouse row still reduce usable stock (from 0).
+  for (const sku of Object.keys(unreflected)) {
+    if (!(sku in warehouse)) warehouse[sku] = 0;
   }
 
   const openPoLines = (db.prepare(`SELECT pl.sku, pl.qty_ordered - pl.qty_received AS qty_outstanding,
@@ -167,6 +186,7 @@ export function assembleEngineInput(db: Database.Database, overrideTemplateId?: 
     overstockFactor: Number(getSetting(db, 'overstock_factor') ?? '1.5'),
     stockoutCorrection: (getSetting(db, 'stockout_correction') ?? '1') === '1',
     stockoutDays: computeStockoutDays(db, snapshot.snapshot_date),
+    inTransitToFba,
   };
 }
 

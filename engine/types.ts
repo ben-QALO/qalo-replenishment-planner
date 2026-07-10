@@ -92,6 +92,11 @@ export interface EngineInput {
   stockoutCorrection: boolean;
   /** Per-SKU stockout days by window, from snapshot history (optional). */
   stockoutDays?: Record<string, StockoutDays>;
+  /**
+   * Units on an open (submitted, not-yet-reconciled) warehouse→FBA transfer, by SKU.
+   * These are "coming to FBA" but may not yet show in Amazon's inbound (the prep gap).
+   */
+  inTransitToFba?: Record<string, number>;
 }
 
 export type StatusTier =
@@ -123,6 +128,8 @@ export interface SkuResult {
   fba_available: number;
   fba_reserved: number;
   fba_inbound: number;
+  in_transit_to_fba: number;
+  fba_coming: number;
   fba_position: number;
   warehouse_on_hand: number;
   open_po_units: number;
