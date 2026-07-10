@@ -1,6 +1,12 @@
 import React, { useMemo, useState } from 'react';
 import { api, fmtInt, fmtNum, type SkusResponse, type SkuResult } from '../api.ts';
-import { StatusBadge, Flags, Tile, toast, downloadCsv } from '../components/ui.tsx';
+import { StatusBadge, Flags, toast, downloadCsv } from '../components/ui.tsx';
+
+const Chevron = () => (
+  <svg width="11" height="11" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+    <path d="M6 4l4 4-4 4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
 
 type QueueKey = 'ship' | 'po' | 'risk';
 
@@ -16,7 +22,9 @@ export function Dashboard({ data, worklist, refresh, openSku, go }: {
   const [queue, setQueue] = useState<QueueKey>('ship');
   const [edited, setEdited] = useState<Record<string, number>>({});
   const [unchecked, setUnchecked] = useState<Record<string, boolean>>({});
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [busy, setBusy] = useState(false);
+  const toggleExpand = (key: string) => setExpanded(m => ({ ...m, [key]: !m[key] }));
 
   const s = data.summary;
   const results = data.results;
@@ -99,48 +107,68 @@ export function Dashboard({ data, worklist, refresh, openSku, go }: {
     { n: wl.no_velocity, label: 'missing sales velocity', hint: 'set an expected rate', hash: '#/skus?flag=NO_VELOCITY', tone: 'var(--stockout)' },
   ].filter(i => i.n > 0) : [];
 
+  const coverClass = (d: number | null) => d === null ? '' : d < 14 ? 'q-cover hot' : d < 30 ? 'q-cover warn' : 'q-cover';
+
   return (
     <div className="page">
       <h1>Action Center</h1>
-      <div className="h-sub">What needs a decision today, worst first. Every number can be audited on the SKU page.</div>
+      <div className="h-sub">What needs a decision today. Clear the tasks up top, then work the queue — every number opens its full reasoning.</div>
 
-      <div className={`worklist${wlItems.length === 0 ? ' clear' : ''}`}>
-        {wlItems.length === 0 ? (
-          <span className="wl-clear">✓ Nothing to reconcile or update — the numbers below are current.</span>
-        ) : (
-          <>
-            <span className="wl-title">Needs your attention</span>
-            {wlItems.map((i, idx) => (
-              <button key={idx} className="wl-item" style={{ ['--wl-c' as any]: i.tone }} onClick={() => go(i.hash)}>
-                <span className="wl-n">{fmtInt(i.n)}</span>
-                <span className="wl-lbl">{i.label}<em>{i.hint}</em></span>
-              </button>
-            ))}
-          </>
-        )}
+      {wlItems.length > 0 && (
+        <div className="worklist">
+          <span className="wl-title">To do first</span>
+          {wlItems.map((i, idx) => (
+            <button key={idx} className="wl-item" title={i.hint} style={{ ['--wl-c' as any]: i.tone }} onClick={() => go(i.hash)}>
+              <span className="wl-n">{fmtInt(i.n)}</span>
+              <span className="wl-lbl">{i.label}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div className="summary">
+        <div className="sum-alert">
+          <button className="sum-fig" style={{ ['--sf-c' as any]: 'var(--stockout)' }} onClick={() => setQueue('ship')}>
+            <div className="n">{s.stockout}</div>
+            <div className="lbl">Stocked out</div>
+            <div className="sub">selling, zero at Amazon</div>
+          </button>
+          <button className="sum-fig" style={{ ['--sf-c' as any]: 'var(--critical)' }} onClick={() => setQueue('po')}>
+            <div className="n">{s.critical}</div>
+            <div className="lbl">Will stock out</div>
+            <div className="sub">gap even if you act today</div>
+          </button>
+        </div>
+        <div className="sum-health">
+          <div className="sum-stat"><div className="n">{fmtInt(s.ok)}</div><div className="lbl">Healthy</div></div>
+          <div className="sum-stat tap" style={{ ['--sf-c' as any]: 'var(--overstock)' }} onClick={() => go('#/skus?status=OVERSTOCK')}>
+            <div className="n">{fmtInt(s.overstock)}</div><div className="lbl">Overstock</div></div>
+          <div className="sum-stat tap" style={{ ['--sf-c' as any]: 'var(--atrisk)' }} onClick={() => setQueue('risk')}>
+            <div className="n">{fmtInt(s.at_risk + s.unclassified)}</div><div className="lbl">At risk</div></div>
+          <div style={{ flex: 1 }} />
+          <div className="sum-stat" style={{ textAlign: 'right' }}>
+            <div className="n" style={{ color: 'var(--muted)', fontSize: 12, fontFamily: 'var(--sans)' }}>
+              {fmtInt(s.ok + s.stockout + s.critical + s.order_now + s.order_soon + s.at_risk + s.overstock + s.unclassified)} SKUs tracked
+            </div>
+          </div>
+        </div>
       </div>
 
-      <div className="tiles">
-        <Tile n={s.stockout} label="Stocked out" color="var(--stockout)" sub="selling, zero available" onClick={() => setQueue('ship')} />
-        <Tile n={s.critical} label="Stockout locked in" color="var(--critical)" sub="gap even if you act today" onClick={() => setQueue('po')} />
-        <Tile n={s.ship_skus} label="Ship to FBA now" color="var(--ship)" sub={`${fmtInt(s.ship_units_total)} units ready`} selected={queue === 'ship'} onClick={() => setQueue('ship')} />
-        <Tile n={s.po_skus} label="Add to China PO" color="var(--po)" sub={`${fmtInt(s.po_units_total)} units suggested`} selected={queue === 'po'} onClick={() => setQueue('po')} />
-        <Tile n={s.at_risk + s.unclassified} label="At risk — review" color="var(--atrisk)" sub={`${s.unclassified} new to classify`} selected={queue === 'risk'} onClick={() => setQueue('risk')} />
-        <Tile n={s.ok} label="Healthy" color="var(--ok)" sub={`${s.overstock} overstocked`} />
-      </div>
-
-      <div className="card" style={{ marginTop: 14 }}>
+      <div className="card">
         <div className="card-head">
-          <div className="tabs" style={{ border: 'none', margin: 0 }}>
-            <button className={queue === 'ship' ? 'on' : ''} onClick={() => setQueue('ship')}>Ship to FBA ({shipRows.length})</button>
-            <button className={queue === 'po' ? 'on' : ''} onClick={() => setQueue('po')}>Next China PO ({poRows.length})</button>
-            <button className={queue === 'risk' ? 'on' : ''} onClick={() => setQueue('risk')}>At risk ({riskRows.length})</button>
+          <div className="segmented">
+            <button className={queue === 'ship' ? 'on' : ''} style={{ ['--seg-c' as any]: 'var(--ship)' }} onClick={() => setQueue('ship')}>
+              Ship to FBA <span className="seg-n">{shipRows.length}</span></button>
+            <button className={queue === 'po' ? 'on' : ''} style={{ ['--seg-c' as any]: 'var(--po)' }} onClick={() => setQueue('po')}>
+              China PO <span className="seg-n">{poRows.length}</span></button>
+            <button className={queue === 'risk' ? 'on' : ''} style={{ ['--seg-c' as any]: 'var(--atrisk)' }} onClick={() => setQueue('risk')}>
+              At risk <span className="seg-n">{riskRows.length}</span></button>
           </div>
           <div className="spacer" />
           {queue !== 'risk' && (
             <>
               <span className="mono" style={{ fontSize: 11.5, color: 'var(--muted)' }}>
-                {selectedRows.length} SKUs · {fmtInt(totalUnits)} units
+                {selectedRows.length} selected · {fmtInt(totalUnits)} units
               </span>
               <button className="btn primary" disabled={busy || selectedRows.length === 0}
                 onClick={queue === 'ship' ? submitTransfers : exportPoProposal}>
@@ -150,7 +178,7 @@ export function Dashboard({ data, worklist, refresh, openSku, go }: {
           )}
         </div>
 
-        <div style={{ maxHeight: 520, overflowY: 'auto' }}>
+        <div style={{ maxHeight: 560, overflowY: 'auto' }}>
           {activeRows.length === 0 ? (
             <div className="empty">
               {queue === 'ship' && 'Nothing to ship — either FBA is covered, or the warehouse is empty (enter warehouse stock under Warehouse & POs).'}
@@ -168,7 +196,7 @@ export function Dashboard({ data, worklist, refresh, openSku, go }: {
                     <td><span className="sku-code" style={{ cursor: 'pointer' }} onClick={() => openSku(r.sku)}>{r.sku}</span>
                       <div className="cell-title">{r.title}</div></td>
                     <td><StatusBadge status={r.status} /> <Flags flags={r.flags} max={2} /></td>
-                    <td style={{ maxWidth: 380, fontSize: 12 }}>{r.why}</td>
+                    <td style={{ maxWidth: 400 }}><span style={{ fontFamily: 'var(--serif)', fontStyle: 'italic', fontSize: 13, color: 'var(--ink-2)' }}>{r.why}</span></td>
                     <td style={{ whiteSpace: 'nowrap' }}>
                       {r.status === 'UNCLASSIFIED' && (
                         <>
@@ -188,66 +216,87 @@ export function Dashboard({ data, worklist, refresh, openSku, go }: {
               </tbody>
             </table>
           ) : (
-            <table className="data">
+            <table className="queue">
               <thead><tr>
-                <th className="plain" style={{ width: 30 }}></th>
+                <th className="plain" style={{ width: 26 }}></th>
+                <th className="plain" style={{ width: 28 }}></th>
                 <th className="plain">SKU</th>
                 <th className="plain">Status</th>
                 <th className="num">u/day</th>
                 {queue === 'ship' ? (
-                  <>
-                    <th className="num">FBA cover</th>
-                    <th className="num">Warehouse</th>
-                    <th className="num">Ship qty</th>
-                    <th className="num">After (days)</th>
-                  </>
+                  <><th className="num">FBA cover</th><th className="num">Warehouse</th><th className="num">Ship qty</th></>
                 ) : (
-                  <>
-                    <th className="num">Pipeline cover</th>
-                    <th className="plain">Place by</th>
-                    <th className="plain">Need by</th>
-                    <th className="num">PO qty</th>
-                  </>
+                  <><th className="num">Pipeline cover</th><th className="plain">Place by</th><th className="num">PO qty</th></>
                 )}
-                <th className="plain">Why</th>
               </tr></thead>
               <tbody>
                 {activeRows.slice(0, 300).map(r => {
                   const key = `${queue}:${r.sku}`;
                   const qty = qtyOf(r);
+                  const isOpen = !!expanded[key];
                   const overdue = queue === 'po' && r.place_by_date && r.place_by_date < (data.today ?? '');
+                  const stop = (e: React.MouseEvent) => e.stopPropagation();
                   return (
-                    <tr key={r.sku}>
-                      <td><input type="checkbox" checked={!unchecked[key]} onChange={e => setUnchecked(u => ({ ...u, [key]: !e.target.checked }))} /></td>
-                      <td><span className="sku-code" style={{ cursor: 'pointer' }} onClick={() => openSku(r.sku)}>{r.sku}</span>
-                        <div className="cell-title" style={{ maxWidth: 250 }}>{r.title}</div></td>
-                      <td><StatusBadge status={r.status} /> <Flags flags={r.flags} max={1} /></td>
-                      <td className="num">{fmtNum(r.velocity)}</td>
-                      {queue === 'ship' ? (
-                        <>
-                          <td className="num" style={{ color: (r.fba_days_cover ?? 999) < 14 ? 'var(--stockout)' : undefined, fontWeight: (r.fba_days_cover ?? 999) < 14 ? 700 : undefined }}>
-                            {fmtNum(r.fba_days_cover, 0)}d</td>
-                          <td className="num">{fmtInt(r.warehouse_on_hand)}</td>
-                          <td className="num">
-                            <input className={`cell-edit${edited[key] !== undefined ? ' dirty' : ''}`} type="number" min={0} value={qty}
-                              onChange={e => setEdited(m => ({ ...m, [key]: Math.max(0, Math.round(Number(e.target.value) || 0)) }))} />
+                    <React.Fragment key={r.sku}>
+                      <tr className={`qrow${isOpen ? ' open' : ''}`} onClick={() => toggleExpand(key)}>
+                        <td className="q-expand"><Chevron /></td>
+                        <td onClick={stop}><input type="checkbox" checked={!unchecked[key]} onChange={e => setUnchecked(u => ({ ...u, [key]: !e.target.checked }))} /></td>
+                        <td onClick={stop}>
+                          <span className="sku-code" style={{ cursor: 'pointer' }} onClick={() => openSku(r.sku)}>{r.sku}</span>
+                          <div className="cell-title" style={{ maxWidth: 260 }}>{r.title}</div>
+                        </td>
+                        <td><StatusBadge status={r.status} /> <Flags flags={r.flags} max={1} /></td>
+                        <td className="num">{fmtNum(r.velocity)}</td>
+                        {queue === 'ship' ? (
+                          <>
+                            <td className="num"><span className={coverClass(r.fba_days_cover)}>{fmtNum(r.fba_days_cover, 0)}d</span></td>
+                            <td className="num">{fmtInt(r.warehouse_on_hand)}</td>
+                            <td className="num" onClick={stop}>
+                              <input className={`cell-edit${edited[key] !== undefined ? ' dirty' : ''}`} type="number" min={0} value={qty}
+                                onChange={e => setEdited(m => ({ ...m, [key]: Math.max(0, Math.round(Number(e.target.value) || 0)) }))} />
+                            </td>
+                          </>
+                        ) : (
+                          <>
+                            <td className="num"><span className={coverClass(r.pipeline_days_cover)}>{fmtNum(r.pipeline_days_cover, 0)}d</span></td>
+                            <td className="mono" style={{ color: overdue ? 'var(--stockout)' : undefined, fontWeight: overdue ? 700 : undefined }}>
+                              {r.place_by_date ?? '—'}{overdue ? ' !' : ''}</td>
+                            <td className="num" onClick={stop}>
+                              <input className={`cell-edit${edited[key] !== undefined ? ' dirty' : ''}`} type="number" min={0} value={qty}
+                                onChange={e => setEdited(m => ({ ...m, [key]: Math.max(0, Math.round(Number(e.target.value) || 0)) }))} />
+                            </td>
+                          </>
+                        )}
+                      </tr>
+                      {isOpen && (
+                        <tr className="q-detail">
+                          <td colSpan={8}>
+                            <div className="why">{r.why}</div>
+                            <div className="math">
+                              <div><div className="k">Velocity</div><div className="v">{fmtNum(r.velocity)}/day</div></div>
+                              {queue === 'ship' ? (
+                                <>
+                                  <div><div className="k">At / heading to Amazon</div><div className="v">{fmtInt(r.fba_position)}</div></div>
+                                  <div><div className="k">FBA cover</div><div className="v">{fmtNum(r.fba_days_cover, 0)}d</div></div>
+                                  <div><div className="k">Reorder point</div><div className="v">{r.fba_rop_days}d</div></div>
+                                  <div><div className="k">Cover after shipping {fmtInt(qty)}</div><div className="v">{r.velocity ? Math.round((r.fba_position + qty) / r.velocity) : '—'}d</div></div>
+                                </>
+                              ) : (
+                                <>
+                                  <div><div className="k">Total pipeline</div><div className="v">{fmtInt(r.total_pipeline)}</div></div>
+                                  <div><div className="k">Pipeline cover</div><div className="v">{fmtNum(r.pipeline_days_cover, 0)}d</div></div>
+                                  <div><div className="k">PO reorder point</div><div className="v">{r.po_rop_days}d</div></div>
+                                  <div><div className="k">Need by</div><div className="v">{r.need_by_arrival ?? '—'}</div></div>
+                                </>
+                              )}
+                              <div style={{ alignSelf: 'flex-end' }}>
+                                <button className="btn sm" onClick={() => openSku(r.sku)}>Open full detail →</button>
+                              </div>
+                            </div>
                           </td>
-                          <td className="num">{r.velocity ? Math.round(((r.fba_position + qty) / r.velocity)) : '—'}d</td>
-                        </>
-                      ) : (
-                        <>
-                          <td className="num">{fmtNum(r.pipeline_days_cover, 0)}d</td>
-                          <td className="mono" style={{ color: overdue ? 'var(--stockout)' : undefined, fontWeight: overdue ? 700 : undefined }}>
-                            {r.place_by_date ?? '—'}{overdue ? ' !' : ''}</td>
-                          <td className="mono">{r.need_by_arrival ?? '—'}</td>
-                          <td className="num">
-                            <input className={`cell-edit${edited[key] !== undefined ? ' dirty' : ''}`} type="number" min={0} value={qty}
-                              onChange={e => setEdited(m => ({ ...m, [key]: Math.max(0, Math.round(Number(e.target.value) || 0)) }))} />
-                          </td>
-                        </>
+                        </tr>
                       )}
-                      <td style={{ minWidth: 230, maxWidth: 320 }}><div className="why" style={{ fontSize: 11.5, padding: '4px 8px' }}>{r.why}</div></td>
-                    </tr>
+                    </React.Fragment>
                   );
                 })}
               </tbody>
