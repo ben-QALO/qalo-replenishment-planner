@@ -106,7 +106,7 @@ export function App() {
     <div className="shell">
       <aside className="sidebar">
         <div className="wordmark">
-          <div className="brand">QALO</div>
+          <img className="logo" src={theme === 'dark' ? '/qalo-white.png' : '/qalo-black.png'} alt="QALO" />
           <div className="sub">Replenishment Planner</div>
         </div>
         <nav className="nav">

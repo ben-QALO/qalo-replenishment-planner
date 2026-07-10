@@ -1,7 +1,7 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect, useRef } from 'react';
 import type { SkuResult } from '../api.ts';
 
-const M = { top: 14, right: 16, bottom: 26, left: 44 };
+const M = { top: 12, right: 14, bottom: 24, left: 40 };
 
 function addDays(date: string, days: number): string {
   const d = new Date(`${date}T00:00:00Z`);
@@ -13,165 +13,167 @@ function diffDays(a: string, b: string): number {
 }
 const fmtDate = (d: string) => `${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][Number(d.slice(5,7))-1]} ${Number(d.slice(8,10))}`;
 
+/** Shared dot-matrix column renderer — the signature visual language. */
+function DotGrid({ columns, rows, W, H, dotR = 2.3 }: {
+  columns: { fill: number; top?: number; danger?: boolean }[]; rows: number; W: number; H: number; dotR?: number;
+}) {
+  const iw = W - M.left - M.right, ih = H - M.top - M.bottom;
+  const n = columns.length;
+  const stepX = iw / n;
+  const stepY = ih / (rows - 1);
+  const baseY = M.top + ih;
+  const dots: React.ReactNode[] = [];
+  columns.forEach((col, c) => {
+    const cx = M.left + stepX * (c + 0.5);
+    const fillRows = Math.max(col.danger ? 1 : 0, Math.round(col.fill * (rows - 1)));
+    for (let r = 0; r < fillRows; r++) {
+      dots.push(<circle key={`f${c}-${r}`} cx={cx} cy={baseY - r * stepY} r={dotR}
+        fill={col.danger && r === 0 ? 'var(--danger)' : 'var(--chart-1)'} />);
+    }
+    const topRows = Math.round((col.top ?? 0) * (rows - 1));
+    for (let r = fillRows; r < fillRows + topRows; r++) {
+      dots.push(<circle key={`t${c}-${r}`} cx={cx} cy={baseY - r * stepY} r={dotR} fill="var(--chart-2)" />);
+    }
+  });
+  return <>{dots}</>;
+}
+
 export interface PoArrival { date: string; qty: number; label: string }
 
-/**
- * Runway: projected Amazon-side stock draining at current velocity, step-ups at
- * open-PO arrivals, red marker where the line touches zero.
- */
+/** Runway: projected Amazon stock draining at velocity, rendered as dot-matrix columns. */
 export function RunwayChart({ r, today, poArrivals }: { r: SkuResult; today: string; poArrivals: PoArrival[] }) {
-  const [hover, setHover] = useState<{ x: number; day: number; units: number } | null>(null);
-  const W = 620, H = 190;
-  const iw = W - M.left - M.right, ih = H - M.top - M.bottom;
-
+  const W = 620, H = 190, ROWS = 9;
   const model = useMemo(() => {
     const v = r.velocity ?? 0;
-    const horizon = Math.max(r.po_rop_days + 20, 120,
-      ...poArrivals.map(p => diffDays(p.date, today) + 20));
+    const horizon = Math.max(r.po_rop_days + 20, 120, ...poArrivals.map(p => diffDays(p.date, today) + 20));
     const H_DAYS = Math.min(240, Math.ceil(horizon));
+    const cols = 34;
+    const bucket = H_DAYS / cols;
     const arrivals = poArrivals
-      .map(p => ({ day: Math.max(0, diffDays(p.date, today)), qty: p.qty, label: p.label }))
-      .filter(a => a.day <= H_DAYS)
-      .sort((a, b) => a.day - b.day);
-    const pts: { day: number; units: number }[] = [];
-    let stock = r.fba_position;
-    let ai = 0;
+      .map(p => ({ day: Math.max(0, diffDays(p.date, today)), qty: p.qty }))
+      .filter(a => a.day <= H_DAYS);
+    // Project stock day by day, then sample per bucket.
+    const perDay: number[] = [];
+    let stock = r.fba_position, ai = 0;
+    const sorted = [...arrivals].sort((a, b) => a.day - b.day);
     for (let d = 0; d <= H_DAYS; d++) {
-      while (ai < arrivals.length && arrivals[ai].day === d) { stock += arrivals[ai].qty; ai++; }
-      pts.push({ day: d, units: Math.max(0, stock) });
+      while (ai < sorted.length && sorted[ai].day === d) { stock += sorted[ai].qty; ai++; }
+      perDay.push(Math.max(0, stock));
       stock = Math.max(0, stock - v);
     }
-    const maxU = Math.max(10, ...pts.map(p => p.units));
-    const zeroDay = pts.find(p => p.units <= 0)?.day ?? null;
-    return { pts, maxU, H_DAYS, arrivals, zeroDay, v };
+    const sampled: number[] = [];
+    for (let c = 0; c < cols; c++) sampled.push(perDay[Math.round(c * bucket)] ?? 0);
+    const maxU = Math.max(10, ...sampled);
+    const zeroDay = perDay.findIndex(s => s <= 0);
+    const zeroCol = zeroDay >= 0 ? Math.round(zeroDay / bucket) : -1;
+    return { sampled, maxU, H_DAYS, zeroDay, zeroCol, cols, bucket, v };
   }, [r, today, poArrivals]);
 
-  const x = (day: number) => M.left + (day / model.H_DAYS) * iw;
-  const y = (u: number) => M.top + ih - (u / model.maxU) * ih;
-
-  const path = model.pts.map((p, i) => `${i === 0 ? 'M' : 'L'}${x(p.day).toFixed(1)},${y(p.units).toFixed(1)}`).join(' ');
-  const area = `${path} L${x(model.H_DAYS).toFixed(1)},${y(0)} L${x(0)},${y(0)} Z`;
-
-  const yTicks = useMemo(() => {
-    const step = Math.pow(10, Math.floor(Math.log10(model.maxU)));
-    const n = model.maxU / step;
-    const s = n >= 5 ? step * 2 : n >= 2.5 ? step : step / 2;
-    const ticks: number[] = [];
-    for (let t = 0; t <= model.maxU; t += s) ticks.push(Math.round(t));
-    return ticks.slice(0, 6);
-  }, [model.maxU]);
-
-  const xTicks = useMemo(() => {
-    const every = model.H_DAYS > 160 ? 60 : model.H_DAYS > 80 ? 30 : 14;
-    const ticks: number[] = [];
-    for (let d = 0; d <= model.H_DAYS; d += every) ticks.push(d);
-    return ticks;
-  }, [model.H_DAYS]);
-
-  const onMove = (e: React.MouseEvent<SVGSVGElement>) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    const px = ((e.clientX - rect.left) / rect.width) * W;
-    const day = Math.round(((px - M.left) / iw) * model.H_DAYS);
-    if (day < 0 || day > model.H_DAYS) { setHover(null); return; }
-    setHover({ x: x(day), day, units: model.pts[day]?.units ?? 0 });
-  };
+  const columns = model.sampled.map((val, c) => ({
+    fill: val / model.maxU,
+    danger: c === model.zeroCol,
+  }));
+  const iw = W - M.left - M.right, ih = H - M.top - M.bottom, baseY = M.top + ih;
 
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', display: 'block' }}
-      onMouseMove={onMove} onMouseLeave={() => setHover(null)} role="img"
-      aria-label="Projected stock runway">
-      {yTicks.map(t => (
-        <g key={t}>
-          <line x1={M.left} x2={W - M.right} y1={y(t)} y2={y(t)} stroke="var(--hairline)" strokeWidth="1" />
-          <text x={M.left - 6} y={y(t) + 3.5} textAnchor="end" fontSize="9.5" fill="var(--muted)" fontFamily="var(--mono)">{t}</text>
-        </g>
+    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', display: 'block' }} role="img" aria-label="Projected stock runway">
+      {[0, 0.5, 1].map(f => (
+        <text key={f} x={M.left - 8} y={baseY - f * ih + 3} textAnchor="end" fontSize="9" fill="var(--muted)" fontFamily="var(--mono)">{Math.round(model.maxU * f)}</text>
       ))}
-      {xTicks.map(d => (
-        <text key={d} x={x(d)} y={H - 8} textAnchor="middle" fontSize="9.5" fill="var(--muted)" fontFamily="var(--mono)">
-          {d === 0 ? 'today' : fmtDate(addDays(today, d))}
+      <DotGrid columns={columns} rows={ROWS} W={W} H={H} />
+      {model.zeroDay >= 0 && (
+        <text x={M.left + (iw / model.cols) * (model.zeroCol + 0.5)} y={baseY + 16} textAnchor="middle" fontSize="9" fontWeight="600" fill="var(--danger)" fontFamily="var(--mono)">
+          OUT {fmtDate(addDays(today, model.zeroDay))}
         </text>
-      ))}
-      <path d={area} fill="var(--chart-1)" opacity="0.09" />
-      <path d={path} fill="none" stroke="var(--chart-1)" strokeWidth="2" strokeLinejoin="round" />
-      {model.arrivals.map((a, i) => (
-        <g key={i}>
-          <line x1={x(a.day)} x2={x(a.day)} y1={M.top} y2={M.top + ih} stroke="var(--chart-2)" strokeWidth="1.5" strokeDasharray="4 3" />
-          <text x={x(a.day) + 4} y={M.top + 10} fontSize="9.5" fill="var(--chart-2)" fontFamily="var(--mono)">+{a.qty} {a.label}</text>
-        </g>
-      ))}
-      {model.zeroDay !== null && (
-        <g>
-          <circle cx={x(model.zeroDay)} cy={y(0)} r="5" fill="var(--stockout)" stroke="var(--surface)" strokeWidth="2" />
-          <text x={Math.min(x(model.zeroDay) + 8, W - 90)} y={y(0) - 7} fontSize="10" fontWeight="700" fill="var(--stockout)" fontFamily="var(--mono)">
-            out {fmtDate(addDays(today, model.zeroDay))}
-          </text>
-        </g>
       )}
-      {hover && (
-        <g pointerEvents="none">
-          <line x1={hover.x} x2={hover.x} y1={M.top} y2={M.top + ih} stroke="var(--ink-2)" strokeWidth="1" opacity="0.5" />
-          <rect x={Math.min(hover.x + 6, W - 132)} y={M.top + 2} width="126" height="30" rx="5" fill="var(--ink)" opacity="0.92" />
-          <text x={Math.min(hover.x + 14, W - 124)} y={M.top + 15} fontSize="9.5" fill="#e9e7dd" fontFamily="var(--mono)">
-            {fmtDate(addDays(today, hover.day))} (+{hover.day}d)
-          </text>
-          <text x={Math.min(hover.x + 14, W - 124)} y={M.top + 27} fontSize="9.5" fill="#fff" fontWeight="700" fontFamily="var(--mono)">
-            {Math.round(hover.units)} units
-          </text>
-        </g>
-      )}
+      <text x={M.left} y={baseY + 16} fontSize="9" fill="var(--muted)" fontFamily="var(--mono)">TODAY</text>
+      <text x={W - M.right} y={baseY + 16} textAnchor="end" fontSize="9" fill="var(--muted)" fontFamily="var(--mono)">+{model.H_DAYS}D</text>
     </svg>
   );
 }
 
 export interface HistoryRow {
-  snapshot_date: string; available: number; inbound: number; reserved: number;
-  units_shipped_t30: number | null;
+  snapshot_date: string; available: number; inbound: number; reserved: number; units_shipped_t30: number | null;
 }
 
-/** Weekly snapshot history: available + inbound stacked areas with a 2px surface gap. */
+/** Stock history as dot-matrix: available (ink) with inbound stacked on top (faint). */
 export function HistoryChart({ rows }: { rows: HistoryRow[] }) {
-  const W = 620, H = 170;
-  const iw = W - M.left - M.right, ih = H - M.top - M.bottom;
+  const W = 620, H = 176, ROWS = 9;
   if (rows.length < 2) {
-    return <div className="empty">Stock history builds up as you import snapshots week over week — {rows.length === 1 ? 'one snapshot so far.' : 'no snapshots yet.'}</div>;
+    return <div className="empty">Stock history builds as you import snapshots week over week — {rows.length === 1 ? 'one so far.' : 'none yet.'}</div>;
   }
   const maxU = Math.max(10, ...rows.map(r => r.available + r.inbound));
-  const x = (i: number) => M.left + (i / (rows.length - 1)) * iw;
-  const y = (u: number) => M.top + ih - (u / maxU) * ih;
-
-  const availPath = rows.map((r, i) => `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)},${y(r.available).toFixed(1)}`).join(' ');
-  const availArea = `${availPath} L${x(rows.length - 1)},${y(0)} L${x(0)},${y(0)} Z`;
-  const stackPath = rows.map((r, i) => `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)},${y(r.available + r.inbound).toFixed(1)}`).join(' ');
-
-  const tickEvery = Math.max(1, Math.ceil(rows.length / 7));
-
+  const columns = rows.map(r => ({ fill: r.available / maxU, top: r.inbound / maxU }));
+  const iw = W - M.left - M.right, ih = H - M.top - M.bottom, baseY = M.top + ih;
+  const tickEvery = Math.max(1, Math.ceil(rows.length / 6));
   return (
     <>
       <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', display: 'block' }} role="img" aria-label="Stock history">
         {[0, 0.5, 1].map(f => (
-          <g key={f}>
-            <line x1={M.left} x2={W - M.right} y1={y(maxU * f)} y2={y(maxU * f)} stroke="var(--hairline)" strokeWidth="1" />
-            <text x={M.left - 6} y={y(maxU * f) + 3.5} textAnchor="end" fontSize="9.5" fill="var(--muted)" fontFamily="var(--mono)">{Math.round(maxU * f)}</text>
-          </g>
+          <text key={f} x={M.left - 8} y={baseY - f * ih + 3} textAnchor="end" fontSize="9" fill="var(--muted)" fontFamily="var(--mono)">{Math.round(maxU * f)}</text>
         ))}
-        <path d={availArea} fill="var(--chart-1)" opacity="0.14" />
-        <path d={availPath} fill="none" stroke="var(--chart-1)" strokeWidth="2" strokeLinejoin="round" />
-        <path d={stackPath} fill="none" stroke="var(--chart-2)" strokeWidth="2" strokeLinejoin="round" strokeDasharray="1 0" />
-        {rows.map((r, i) => (
-          <g key={i}>
-            <circle cx={x(i)} cy={y(r.available)} r="3" fill="var(--chart-1)" stroke="var(--surface)" strokeWidth="2">
-              <title>{`${r.snapshot_date}: ${r.available} available, ${r.inbound} inbound`}</title>
-            </circle>
-            {i % tickEvery === 0 && (
-              <text x={x(i)} y={H - 8} textAnchor="middle" fontSize="9.5" fill="var(--muted)" fontFamily="var(--mono)">{fmtDate(r.snapshot_date)}</text>
-            )}
-          </g>
+        <DotGrid columns={columns} rows={ROWS} W={W} H={H} />
+        {rows.map((r, i) => i % tickEvery === 0 && (
+          <text key={i} x={M.left + (iw / rows.length) * (i + 0.5)} y={baseY + 15} textAnchor="middle" fontSize="8.5" fill="var(--muted)" fontFamily="var(--mono)">{fmtDate(r.snapshot_date)}</text>
         ))}
       </svg>
       <div className="chart-legend">
-        <span className="key"><span className="swatch" style={{ background: 'var(--chart-1)' }} /> Available at FBA</span>
-        <span className="key"><span className="swatch" style={{ background: 'var(--chart-2)' }} /> Available + inbound</span>
+        <span className="key"><span className="swatch" style={{ background: 'var(--chart-1)' }} /> Available</span>
+        <span className="key"><span className="swatch" style={{ background: 'var(--chart-2)' }} /> Inbound</span>
       </div>
     </>
   );
+}
+
+/* ── Catalog dot-map: one dot per tracked SKU, shaded by status ────────────── */
+
+const TONE: Record<string, string> = {
+  STOCKOUT: 'danger', CRITICAL: 'danger',
+  ORDER_NOW: 'ink', ORDER_SOON: 'ink',
+  OK: 'mid', OVERSTOCK: 'faint',
+  AT_RISK: 'ring', UNCLASSIFIED: 'ring',
+};
+const TONE_ORDER = ['danger', 'ink', 'ring', 'mid', 'faint'];
+
+export function CatalogDotMap({ results, onPick }: { results: SkuResult[]; onPick?: (status: string) => void }) {
+  const dots = useMemo(() => {
+    const tracked = results.filter(r => r.status !== 'NOT_REPLENISHABLE');
+    return tracked
+      .map(r => ({ sku: r.sku, status: r.status, tone: TONE[r.status] ?? 'mid' }))
+      .sort((a, b) => TONE_ORDER.indexOf(a.tone) - TONE_ORDER.indexOf(b.tone));
+  }, [results]);
+
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => { const t = setTimeout(() => setMounted(true), 20); return () => clearTimeout(t); }, []);
+
+  return (
+    <div className="dotmap" aria-label="Catalog status map">
+      {dots.map((d, i) => (
+        <span key={d.sku} className={`dot-cell tone-${d.tone}${mounted ? ' in' : ''}`}
+          style={{ transitionDelay: `${Math.min(i * 1.5, 600)}ms` }}
+          title={`${d.sku} — ${d.status.toLowerCase().replace(/_/g, ' ')}`}
+          onClick={() => onPick?.(d.status)} />
+      ))}
+    </div>
+  );
+}
+
+/* ── Count-up number ───────────────────────────────────────────────────────── */
+
+export function CountUp({ value, className }: { value: number; className?: string }) {
+  const [n, setN] = useState(0);
+  const raf = useRef<number>();
+  useEffect(() => {
+    const start = performance.now();
+    const dur = 700;
+    const tick = (t: number) => {
+      const p = Math.min(1, (t - start) / dur);
+      const eased = 1 - Math.pow(1 - p, 3);
+      setN(Math.round(eased * value));
+      if (p < 1) raf.current = requestAnimationFrame(tick);
+    };
+    raf.current = requestAnimationFrame(tick);
+    return () => { if (raf.current) cancelAnimationFrame(raf.current); };
+  }, [value]);
+  return <span className={className}>{n}</span>;
 }

@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { api, fmtInt, fmtNum, type SkusResponse, type SkuResult } from '../api.ts';
 import { StatusBadge, Flags, toast, downloadCsv } from '../components/ui.tsx';
+import { CatalogDotMap, CountUp } from '../components/charts.tsx';
 
 const Chevron = () => (
   <svg width="11" height="11" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -128,29 +129,29 @@ export function Dashboard({ data, worklist, refresh, openSku, go }: {
 
       <div className="summary">
         <div className="sum-alert">
-          <button className="sum-fig" style={{ ['--sf-c' as any]: 'var(--stockout)' }} onClick={() => setQueue('ship')}>
-            <div className="n">{s.stockout}</div>
+          <button className="sum-fig" style={{ ['--sf-c' as any]: 'var(--danger)' }} onClick={() => setQueue('ship')}>
+            <div className="n"><CountUp value={s.stockout} /></div>
             <div className="lbl">Stocked out</div>
             <div className="sub">selling, zero at Amazon</div>
           </button>
-          <button className="sum-fig" style={{ ['--sf-c' as any]: 'var(--critical)' }} onClick={() => setQueue('po')}>
-            <div className="n">{s.critical}</div>
+          <button className="sum-fig" style={{ ['--sf-c' as any]: 'var(--danger)' }} onClick={() => setQueue('po')}>
+            <div className="n"><CountUp value={s.critical} /></div>
             <div className="lbl">Will stock out</div>
             <div className="sub">gap even if you act today</div>
           </button>
         </div>
-        <div className="sum-health">
-          <div className="sum-stat"><div className="n">{fmtInt(s.ok)}</div><div className="lbl">Healthy</div></div>
-          <div className="sum-stat tap" style={{ ['--sf-c' as any]: 'var(--overstock)' }} onClick={() => go('#/skus?status=OVERSTOCK')}>
-            <div className="n">{fmtInt(s.overstock)}</div><div className="lbl">Overstock</div></div>
-          <div className="sum-stat tap" style={{ ['--sf-c' as any]: 'var(--atrisk)' }} onClick={() => setQueue('risk')}>
-            <div className="n">{fmtInt(s.at_risk + s.unclassified)}</div><div className="lbl">At risk</div></div>
-          <div style={{ flex: 1 }} />
-          <div className="sum-stat" style={{ textAlign: 'right' }}>
-            <div className="n" style={{ color: 'var(--muted)', fontSize: 12, fontFamily: 'var(--sans)' }}>
-              {fmtInt(s.ok + s.stockout + s.critical + s.order_now + s.order_soon + s.at_risk + s.overstock + s.unclassified)} SKUs tracked
+        <div className="sum-map">
+          <div className="sum-map-head">
+            <span className="wl-title">Catalog · {fmtInt(s.ok + s.stockout + s.critical + s.order_now + s.order_soon + s.at_risk + s.overstock + s.unclassified)} SKUs</span>
+            <div className="map-legend">
+              <span><i className="tone-danger" />{fmtInt(s.stockout + s.critical)} urgent</span>
+              <span><i className="tone-ink" />{fmtInt(s.order_now + s.order_soon)} to order</span>
+              <span><i className="tone-mid" />{fmtInt(s.ok)} healthy</span>
+              <span><i className="tone-faint" />{fmtInt(s.overstock)} overstock</span>
+              <span><i className="tone-ring" />{fmtInt(s.at_risk + s.unclassified)} at risk</span>
             </div>
           </div>
+          <CatalogDotMap results={results} onPick={(status) => go(`#/skus?status=${status}`)} />
         </div>
       </div>
 

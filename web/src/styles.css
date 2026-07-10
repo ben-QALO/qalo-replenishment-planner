@@ -101,6 +101,7 @@ body, .sidebar, .card, .summary, .worklist, .context-strip, .segmented,
   padding: var(--s5) 0 var(--s4);
 }
 .wordmark { padding: 0 var(--s5) var(--s5); margin-bottom: var(--s4); border-bottom: 1px solid var(--hairline); }
+.wordmark .logo { height: 22px; width: auto; display: block; }
 .wordmark .brand { font-family: var(--sans); font-weight: 700; letter-spacing: 0.26em; font-size: 20px; color: var(--ink); }
 .wordmark .sub { font-family: var(--mono); font-size: 9px; color: var(--muted); letter-spacing: 0.18em; margin-top: 7px; text-transform: uppercase; }
 
@@ -205,6 +206,27 @@ h2 { font-family: var(--display); font-size: 17px; font-weight: 500; letter-spac
 .sum-stat .lbl { font-family: var(--mono); font-size: 9.5px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.12em; margin-top: 5px; }
 .sum-stat.tap { cursor: pointer; }
 .sum-stat.tap:hover .n { color: var(--sf-c, var(--ink)); opacity: 0.7; }
+
+/* Catalog dot-map (the signature visual) */
+.sum-map { flex: 1; display: flex; flex-direction: column; gap: var(--s3); padding: var(--s5); min-width: 0; }
+.sum-map-head { display: flex; align-items: baseline; gap: var(--s5); flex-wrap: wrap; }
+.map-legend { display: flex; gap: var(--s4); flex-wrap: wrap; font-family: var(--mono); font-size: 10px; color: var(--muted); }
+.map-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.map-legend i { width: 8px; height: 8px; border-radius: 99px; display: inline-block; }
+.dotmap { display: flex; flex-wrap: wrap; gap: 4px; align-content: flex-start; }
+.dot-cell {
+  width: 8px; height: 8px; border-radius: 99px; cursor: pointer;
+  opacity: 0; transform: scale(0.4);
+  transition: opacity 0.35s var(--ease), transform 0.35s var(--ease), filter 120ms;
+}
+.dot-cell.in { opacity: 1; transform: scale(1); }
+.dot-cell:hover { filter: brightness(0.75); transform: scale(1.5); }
+.tone-danger { background: var(--danger); }
+.tone-ink { background: var(--ink); }
+.tone-mid { background: var(--muted); }
+.tone-faint { background: var(--hairline-2); }
+.tone-ring { background: transparent; box-shadow: inset 0 0 0 1.5px var(--muted); }
+i.tone-ring { background: transparent; box-shadow: inset 0 0 0 1.5px var(--muted); }
 
 /* ── Cards, tables ── */
 .card {
