@@ -8,11 +8,13 @@ const CLASSES = ['unclassified', 'replenishable', 'watch', 'discontinued', 'igno
 
 type SortKey = keyof SkuResult | 'none';
 
-export function AllSkus({ data, refresh, openSku, initialStatus }: {
-  data: SkusResponse; refresh: () => void; openSku: (sku: string) => void; initialStatus?: string | null;
+export function AllSkus({ data, refresh, openSku, initialStatus, initialFlag }: {
+  data: SkusResponse; refresh: () => void; openSku: (sku: string) => void;
+  initialStatus?: string | null; initialFlag?: string | null;
 }) {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string | null>(initialStatus ?? null);
+  const [flagFilter, setFlagFilter] = useState<string | null>(initialFlag ?? null);
   const [classFilter, setClassFilter] = useState<string | null>(null);
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: 'none', dir: 1 });
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -23,6 +25,7 @@ export function AllSkus({ data, refresh, openSku, initialStatus }: {
   const rows = useMemo(() => {
     let out = data.results;
     if (statusFilter) out = out.filter(r => r.status === statusFilter);
+    if (flagFilter) out = out.filter(r => r.flags.includes(flagFilter));
     if (classFilter) out = out.filter(r => r.classification === classFilter);
     if (search.trim()) {
       const q = search.trim().toLowerCase();
@@ -38,7 +41,7 @@ export function AllSkus({ data, refresh, openSku, initialStatus }: {
       });
     }
     return out;
-  }, [data.results, statusFilter, classFilter, search, sort]);
+  }, [data.results, statusFilter, flagFilter, classFilter, search, sort]);
 
   const parentRef = useRef<HTMLDivElement>(null);
   const virtualizer = useVirtualizer({
@@ -90,6 +93,11 @@ export function AllSkus({ data, refresh, openSku, initialStatus }: {
           <option value="">All classifications</option>
           {CLASSES.map(c => <option key={c} value={c}>{c}</option>)}
         </select>
+        {flagFilter && (
+          <button className="chip on" onClick={() => setFlagFilter(null)}>
+            flag: {flagFilter.toLowerCase().replace(/_/g, ' ')} ✕
+          </button>
+        )}
         {STATUS_FILTERS.map(sf => (
           <button key={sf} className={`chip${statusFilter === sf ? ' on' : ''}`}
             onClick={() => setStatusFilter(statusFilter === sf ? null : sf)}>

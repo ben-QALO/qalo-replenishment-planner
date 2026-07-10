@@ -31,18 +31,17 @@ test('days of cover: null velocity → null; zero velocity → capped; normal di
   assert.equal(daysOfCover(76, 2), 38);
 });
 
-test('in-transit transfer counts once: max(amazon inbound, transfer), never the sum', () => {
-  // Prep gap: Amazon shows nothing yet, but a 500 transfer is open.
+test('fba_coming = amazon inbound + in-transit (in-transit is already netted upstream)', () => {
+  // inTransitToFba here is the netted "not yet at Amazon" figure; summing counts once.
   const gap = computePositions(line({ sku: 'A', available: 20, inbound_shipped: 0 }), 100, [], 500);
-  assert.equal(gap.fba_coming, 500);              // covered from the ledger
-  assert.equal(gap.fba_position, 20 + 0 + 500);
+  assert.equal(gap.fba_coming, 500);
+  assert.equal(gap.fba_position, 520);
 
-  // Amazon now shows the 500 inbound while the transfer is still open → still 500, not 1000.
-  const landed = computePositions(line({ sku: 'A', available: 20, inbound_shipped: 500 }), 100, [], 500);
-  assert.equal(landed.fba_coming, 500);
-  assert.equal(landed.fba_position, 520);
+  // Amazon shows 60 inbound (already-landed units) plus 40 still genuinely in flight.
+  const mixed = computePositions(line({ sku: 'A', available: 20, inbound_shipped: 60 }), 100, [], 40);
+  assert.equal(mixed.fba_coming, 100);
+  assert.equal(mixed.fba_position, 120);
 
-  // No transfer, Amazon inbound only → unchanged behaviour.
   const plain = computePositions(line({ sku: 'A', available: 20, inbound_shipped: 60 }), 100, [], 0);
   assert.equal(plain.fba_coming, 60);
 });

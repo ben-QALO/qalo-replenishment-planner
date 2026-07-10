@@ -33,12 +33,18 @@ export function transferRoutes(app: FastifyInstance): void {
     const batchId = `T-${now.replace(/[-:T.Z]/g, '').slice(0, 14)}`;
     const snapshot = latestSnapshot(db);
     const output = currentRecommendations(db, today());
+    const byResult = new Map((output?.results ?? []).map(r => [r.sku, r]));
     const titleOf = new Map((output?.results ?? []).map(r => [r.sku, r.title]));
 
     const run = db.transaction(() => {
-      const ins = db.prepare(`INSERT INTO transfers (sku, qty, status, created_at, submitted_at, batch_id, snapshot_id)
-        VALUES (?, ?, 'submitted', ?, ?, ?, ?)`);
-      for (const l of lines) ins.run(l.sku, l.qty, now, now, batchId, snapshot?.id ?? null);
+      const ins = db.prepare(`INSERT INTO transfers (sku, qty, status, created_at, submitted_at, batch_id, snapshot_id, baseline_fba)
+        VALUES (?, ?, 'submitted', ?, ?, ?, ?, ?)`);
+      for (const l of lines) {
+        const r = byResult.get(l.sku);
+        // Amazon-side units for this SKU right now; later arrivals above this are "landed".
+        const baseline = r ? r.fba_available + r.fba_inbound : 0;
+        ins.run(l.sku, l.qty, now, now, batchId, snapshot?.id ?? null, baseline);
+      }
     });
     run();
     bumpRevision();

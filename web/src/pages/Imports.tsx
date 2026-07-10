@@ -42,7 +42,7 @@ export function Imports({ refresh }: { refresh: () => void }) {
     setBusy(true);
     try {
       const res = await api.post<any>('/api/keep-list', { text: keepText });
-      toast(`Keep list applied — ${res.kept_skus} SKUs kept, ${res.ignored_skus} ignored${res.not_found.length ? `, ${res.not_found.length} not found` : ''}.`);
+      toast(`Keep list applied — ${res.kept_skus} SKUs kept, ${res.ignored_skus} ignored${res.preserved_skus ? `, ${res.preserved_skus} manual kept as-is` : ''}${res.not_found.length ? `, ${res.not_found.length} not found` : ''}.`);
       setKeepText(''); loadKeep(); refresh();
     } catch (err: any) { toast(err.message); } finally { setBusy(false); }
   }

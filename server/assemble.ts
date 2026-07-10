@@ -2,6 +2,7 @@
 import type Database from 'better-sqlite3';
 import type { EngineInput, EngineOutput, SkuSettings, SnapshotLine, TemplateParams, StockoutDays } from '../engine/types.ts';
 import { computeRecommendations } from '../engine/index.ts';
+import { netTransfers, type OpenTransfer, type WarehouseRow } from '../engine/transfers.ts';
 import { getRevision } from './db/connection.ts';
 
 export interface SnapshotMeta {
@@ -137,29 +138,26 @@ export function assembleEngineInput(db: Database.Database, overrideTemplateId?: 
     };
   }
 
-  // Warehouse on-hand, netted of transfers the latest import hasn't reflected yet.
-  // A transfer submitted AFTER the newest warehouse update isn't in that file's numbers,
-  // so we subtract it (this is what makes inventory "drop in the tool" at submit); a
-  // transfer submitted before it is already reflected, so we leave it (no double-count).
-  const cutoffRow = db.prepare('SELECT MAX(updated_at) AS cutoff FROM warehouse_inventory').get() as { cutoff: string | null };
-  const cutoff = cutoffRow?.cutoff ?? '';
-  const openTransfers = db.prepare(
-    "SELECT sku, qty, submitted_at FROM transfers WHERE status = 'submitted'").all() as { sku: string; qty: number; submitted_at: string | null }[];
-  const inTransitToFba: Record<string, number> = {};
-  const unreflected: Record<string, number> = {};
-  for (const t of openTransfers) {
-    inTransitToFba[t.sku] = (inTransitToFba[t.sku] ?? 0) + t.qty;
-    if (!cutoff || (t.submitted_at ?? '') > cutoff) unreflected[t.sku] = (unreflected[t.sku] ?? 0) + t.qty;
-  }
+  // Net open transfers against both files (pure, per-SKU — see engine/transfers.ts):
+  //  - warehouse is netted only for transfers THIS sku's import hasn't reflected yet
+  //    (per-SKU cutoff — a global one would double-count when other SKUs are updated or
+  //    when this SKU is missing from an import);
+  //  - in-transit-to-FBA is what Amazon hasn't yet taken in since the transfer submitted
+  //    (per-transfer baseline), so a unit is never counted in both warehouse and FBA.
+  const whRows = db.prepare('SELECT sku, qty_on_hand, updated_at FROM warehouse_inventory').all() as any[];
+  const whMap: Record<string, WarehouseRow> = {};
+  for (const r of whRows) whMap[r.sku] = { onHand: r.qty_on_hand, updatedAt: r.updated_at };
 
-  const warehouse: Record<string, number> = {};
-  for (const r of db.prepare('SELECT sku, qty_on_hand FROM warehouse_inventory').all() as any[]) {
-    warehouse[r.sku] = Math.max(0, r.qty_on_hand - (unreflected[r.sku] ?? 0));
-  }
-  // Transfers on SKUs with no warehouse row still reduce usable stock (from 0).
-  for (const sku of Object.keys(unreflected)) {
-    if (!(sku in warehouse)) warehouse[sku] = 0;
-  }
+  const openTransfers = db.prepare(
+    "SELECT sku, qty, submitted_at, baseline_fba FROM transfers WHERE status = 'submitted'").all() as OpenTransfer[];
+
+  const amazonFba: Record<string, number> = {};
+  for (const l of lines) amazonFba[l.sku] = (l.available ?? 0)
+    + (l.inbound_working ?? 0) + (l.inbound_shipped ?? 0) + (l.inbound_received ?? 0);
+
+  const net = netTransfers(openTransfers, whMap, amazonFba);
+  const warehouse = net.warehouseUsable;
+  const inTransitToFba = net.inTransit;
 
   const openPoLines = (db.prepare(`SELECT pl.sku, pl.qty_ordered - pl.qty_received AS qty_outstanding,
       po.expected_arrival, po.po_number

@@ -12,6 +12,7 @@ export function classifyToken(v: string): 'asin' | 'sku' {
 export interface KeepListApplyResult {
   kept_skus: number;
   ignored_skus: number;
+  preserved_skus: number; // manual watch/discontinued left untouched
   values_total: number;
   asins: number;
   skus: number;
@@ -40,7 +41,7 @@ export function applyKeepList(db: Database.Database, tokens: string[]): KeepList
   const skus = new Set<string>();
   for (const t of tokens) (classifyToken(t) === 'asin' ? asins : skus).add(t.toUpperCase());
 
-  const catalog = db.prepare('SELECT sku, asin FROM skus').all() as { sku: string; asin: string | null }[];
+  const catalog = db.prepare('SELECT sku, asin, classification FROM skus').all() as { sku: string; asin: string | null; classification: string }[];
   const isKept = (row: { sku: string; asin: string | null }) =>
     skus.has(row.sku.toUpperCase()) || (row.asin ? asins.has(row.asin.toUpperCase()) : false);
 
@@ -54,13 +55,19 @@ export function applyKeepList(db: Database.Database, tokens: string[]): KeepList
     for (const s of skus) ins.run('sku', s, now);
 
     const setClass = db.prepare('UPDATE skus SET classification = ?, updated_at = ? WHERE sku = ?');
-    let kept = 0, ignored = 0;
+    let kept = 0, ignored = 0, preserved = 0;
     for (const row of catalog) {
       if (isKept(row)) {
-        setClass.run('replenishable', now, row.sku);
+        // Don't stomp deliberate human states; only (re)assert replenishable on the
+        // auto-managed ones. A kept SKU the operator set to watch/discontinued stays put.
+        if (row.classification === 'watch' || row.classification === 'discontinued') preserved++;
+        else setClass.run('replenishable', now, row.sku);
         kept++;
         if (row.asin && asins.has(row.asin.toUpperCase())) matchedAsins.add(row.asin.toUpperCase());
         if (skus.has(row.sku.toUpperCase())) matchedSkus.add(row.sku.toUpperCase());
+      } else if (row.classification === 'watch' || row.classification === 'discontinued') {
+        // Preserve manual watch/discontinued for non-kept SKUs too — never silently ignore them.
+        preserved++;
       } else {
         setClass.run('ignore', now, row.sku);
         ignored++;
@@ -71,7 +78,7 @@ export function applyKeepList(db: Database.Database, tokens: string[]): KeepList
       ...[...skus].filter(s => !matchedSkus.has(s)),
     ];
     return {
-      kept_skus: kept, ignored_skus: ignored,
+      kept_skus: kept, ignored_skus: ignored, preserved_skus: preserved,
       values_total: tokens.length, asins: asins.size, skus: skus.size,
       not_found: notFound,
     };

@@ -25,11 +25,10 @@ export function computePositions(
   const available = line?.available ?? 0;
   const reserved = line?.reserved ?? 0;
   const amazonInbound = (line?.inbound_working ?? 0) + (line?.inbound_shipped ?? 0) + (line?.inbound_received ?? 0);
-  // Units on an open transfer and units Amazon already shows inbound are the SAME units
-  // at different points in the pipeline. Taking the MAX (never the sum) counts each once:
-  // while transfers exceed what Amazon shows, we cover the invisible prep gap; once Amazon
-  // catches up, we defer to Amazon. No double-count regardless of file/reconcile timing.
-  const fba_coming = Math.max(amazonInbound, inTransitToFba);
+  // inTransitToFba is already netted upstream (engine/transfers.ts) to the units Amazon has
+  // NOT yet taken in since the transfer submitted — so it's disjoint from amazonInbound and
+  // from available. Summing therefore counts each in-flight unit exactly once.
+  const fba_coming = amazonInbound + inTransitToFba;
   const fba_position = available + reserved + fba_coming;
   const open_po_units = poLines.reduce((s, l) => s + Math.max(0, l.qty_outstanding), 0);
   return {

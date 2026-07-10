@@ -96,7 +96,7 @@ export function Dashboard({ data, worklist, refresh, openSku, go }: {
     { n: wl.transfers_look_inbound, label: 'look inbound — reconcile', hint: 'Amazon appears to show these', hash: '#/warehouse?tab=transfers', tone: 'var(--ship)' },
     { n: wl.pos_to_action, label: 'POs to update', hint: 'draft to send, or overdue', hash: '#/warehouse?tab=pos', tone: 'var(--atrisk)' },
     { n: wl.new_products, label: 'new products to classify', hint: 'keep or ignore', hash: '#/skus?status=UNCLASSIFIED', tone: 'var(--atrisk)' },
-    { n: wl.no_velocity, label: 'missing sales velocity', hint: 'set an expected rate', hash: '#/skus?status=AT_RISK', tone: 'var(--stockout)' },
+    { n: wl.no_velocity, label: 'missing sales velocity', hint: 'set an expected rate', hash: '#/skus?flag=NO_VELOCITY', tone: 'var(--stockout)' },
   ].filter(i => i.n > 0) : [];
 
   return (

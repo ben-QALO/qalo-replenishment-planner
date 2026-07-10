@@ -42,14 +42,18 @@ function Transfers({ refresh }: { refresh: () => void; openSku?: (sku: string) =
   async function reconcile(ids: number[]) {
     if (ids.length === 0) return;
     try {
-      await api.post('/api/transfers/reconcile-bulk', { ids });
-      toast(`${ids.length} transfer(s) reconciled.`);
+      const res = await api.post<{ reconciled: number }>('/api/transfers/reconcile-bulk', { ids });
+      toast(`${res.reconciled} transfer(s) reconciled.`);
       setSel(new Set()); load(); refresh();
     } catch (err: any) { toast(err.message); }
   }
   async function cancel(id: number) {
     if (!window.confirm('Cancel this transfer? Its units return to usable warehouse stock.')) return;
-    try { await api.post(`/api/transfers/${id}/cancel`); load(); refresh(); } catch (err: any) { toast(err.message); }
+    try {
+      await api.post(`/api/transfers/${id}/cancel`);
+      setSel(prev => { const n = new Set(prev); n.delete(id); return n; });
+      load(); refresh();
+    } catch (err: any) { toast(err.message); }
   }
 
   return (
