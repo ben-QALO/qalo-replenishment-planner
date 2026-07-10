@@ -262,6 +262,8 @@ table.data tr.clickable { cursor: pointer; }
   position: sticky; top: 0; background: var(--surface); z-index: 5;
 }
 .queue th.num, .queue td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.queue th.sortable { cursor: pointer; user-select: none; transition: color 120ms; }
+.queue th.sortable:hover { color: var(--ink); }
 .queue td { padding: 12px 14px; border-bottom: 1px solid var(--hairline); vertical-align: middle; }
 .queue tr.qrow { transition: background 120ms var(--ease); }
 .queue tr.qrow:hover td { background: var(--surface-2); }

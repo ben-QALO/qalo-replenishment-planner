@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { api, fmtInt, fmtNum, type SkusResponse, type SkuResult } from '../api.ts';
 import { StatusBadge, Flags, toast, downloadCsv } from '../components/ui.tsx';
 import { CatalogDotMap, CountUp } from '../components/charts.tsx';
@@ -25,7 +25,13 @@ export function Dashboard({ data, worklist, refresh, openSku, go }: {
   const [unchecked, setUnchecked] = useState<Record<string, boolean>>({});
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [busy, setBusy] = useState(false);
+  const [sort, setSort] = useState<{ key: string; dir: 1 | -1 } | null>(null);
   const toggleExpand = (key: string) => setExpanded(m => ({ ...m, [key]: !m[key] }));
+
+  // Column headers differ per queue, so reset any sort when switching queues.
+  useEffect(() => { setSort(null); }, [queue]);
+  const headerClick = (key: string) => setSort(s => (s && s.key === key ? { key, dir: (s.dir === 1 ? -1 : 1) } : { key, dir: 1 }));
+  const arrow = (key: string) => (sort?.key === key ? (sort.dir === 1 ? ' ↑' : ' ↓') : '');
 
   const s = data.summary;
   const results = data.results;
@@ -45,6 +51,34 @@ export function Dashboard({ data, worklist, refresh, openSku, go }: {
     [results]);
 
   const activeRows = queue === 'ship' ? shipRows : queue === 'po' ? poRows : riskRows;
+
+  // Sortable queue: click a header to sort; falls back to each queue's default order.
+  const sortVal = (r: SkuResult, key: string): number | string => {
+    switch (key) {
+      case 'sku': return r.sku;
+      case 'status': return r.status;
+      case 'place_by_date': return r.place_by_date ?? '9999-99-99';
+      case 'velocity': return r.velocity ?? -1;
+      case 'fba_days_cover': return r.fba_days_cover ?? Number.POSITIVE_INFINITY;
+      case 'pipeline_days_cover': return r.pipeline_days_cover ?? Number.POSITIVE_INFINITY;
+      case 'warehouse_on_hand': return r.warehouse_on_hand;
+      case 'recommended_ship_qty': return r.recommended_ship_qty;
+      case 'recommended_po_qty': return r.recommended_po_qty;
+      default: return 0;
+    }
+  };
+  const displayRows = useMemo(() => {
+    if (!sort) return activeRows;
+    return [...activeRows].sort((a, b) => {
+      const av = sortVal(a, sort.key), bv = sortVal(b, sort.key);
+      return (av < bv ? -1 : av > bv ? 1 : 0) * sort.dir;
+    });
+  }, [activeRows, sort]);
+
+  const Th = ({ k, label, cls = '' }: { k: string; label: string; cls?: string }) => (
+    <th className={`sortable ${cls}`} onClick={() => headerClick(k)}>{label}{arrow(k)}</th>
+  );
+
   const qtyOf = (r: SkuResult) => edited[`${queue}:${r.sku}`] ?? (queue === 'ship' ? r.recommended_ship_qty : r.recommended_po_qty);
   const selectedRows = activeRows.filter(r => !unchecked[`${queue}:${r.sku}`] && qtyOf(r) > 0);
   const totalUnits = selectedRows.reduce((t, r) => t + qtyOf(r), 0);
@@ -221,17 +255,17 @@ export function Dashboard({ data, worklist, refresh, openSku, go }: {
               <thead><tr>
                 <th className="plain" style={{ width: 26 }}></th>
                 <th className="plain" style={{ width: 28 }}></th>
-                <th className="plain">SKU</th>
-                <th className="plain">Status</th>
-                <th className="num">u/day</th>
+                <Th k="sku" label="SKU" />
+                <Th k="status" label="Status" />
+                <Th k="velocity" label="u/day" cls="num" />
                 {queue === 'ship' ? (
-                  <><th className="num">FBA cover</th><th className="num">Warehouse</th><th className="num">Ship qty</th></>
+                  <><Th k="fba_days_cover" label="FBA cover" cls="num" /><Th k="warehouse_on_hand" label="Warehouse" cls="num" /><Th k="recommended_ship_qty" label="Ship qty" cls="num" /></>
                 ) : (
-                  <><th className="num">Pipeline cover</th><th className="plain">Place by</th><th className="num">PO qty</th></>
+                  <><Th k="pipeline_days_cover" label="Pipeline cover" cls="num" /><Th k="place_by_date" label="Place by" /><Th k="recommended_po_qty" label="PO qty" cls="num" /></>
                 )}
               </tr></thead>
               <tbody>
-                {activeRows.slice(0, 300).map(r => {
+                {displayRows.slice(0, 300).map(r => {
                   const key = `${queue}:${r.sku}`;
                   const qty = qtyOf(r);
                   const isOpen = !!expanded[key];
