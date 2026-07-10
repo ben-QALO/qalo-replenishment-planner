@@ -395,6 +395,14 @@ input.cell-edit.dirty { border-color: var(--ink); background: var(--surface-2); 
 
 .empty { text-align: center; color: var(--muted); padding: 44px 16px; font-size: 13px; }
 
+/* Inline field help + settings glossary */
+.field-help { font-size: 11px; color: var(--muted); margin-top: 6px; line-height: 1.45; }
+.glossary { background: var(--surface-2); }
+.glossary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 10px 24px; }
+.glossary-grid > div { font-size: 12px; line-height: 1.45; }
+.g-term { font-weight: 600; color: var(--ink); margin-right: 6px; }
+.g-def { color: var(--muted); }
+
 .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
 @media (max-width: 1100px) { .grid-2 { grid-template-columns: 1fr; } }
 

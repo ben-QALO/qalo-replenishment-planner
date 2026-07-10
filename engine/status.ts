@@ -15,6 +15,8 @@ export interface StatusInput {
   pipeline_days_cover: number | null;
   fba_rop_days: number;
   po_rop_days: number;
+  fba_target_days: number;
+  po_target_days: number;
   fbaTriggered: boolean;
   poTriggered: boolean;
   recommended_ship_qty: number;
@@ -89,12 +91,12 @@ export function assignStatus(s: StatusInput): { status: StatusTier; why: string 
     const parts: string[] = [];
     if (s.fbaTriggered) {
       parts.push(
-        `${s.fba_position} at/heading to Amazon = ${fmt(s.fba_days_cover)} days of cover vs a ${Math.round(s.fba_rop_days)}-day reorder point (${fbaRopExplain}) → ship ${s.recommended_ship_qty}${s.case_pack && s.case_pack > 1 ? ` (cases of ${s.case_pack})` : ''}`,
+        `${s.fba_position} at/heading to Amazon = ${fmt(s.fba_days_cover)} days of cover, below the ${Math.round(s.fba_rop_days)}-day reorder point (${fbaRopExplain}) → ship ${s.recommended_ship_qty}${s.case_pack && s.case_pack > 1 ? ` (cases of ${s.case_pack})` : ''} to reach your ${Math.round(s.fba_target_days)}-day FBA target`,
       );
     }
     if (s.poTriggered) {
       parts.push(
-        `total pipeline ${s.total_pipeline} = ${fmt(s.pipeline_days_cover)} days vs a ${Math.round(s.po_rop_days)}-day PO point (${poRopExplain}) → order ${s.recommended_po_qty}`,
+        `total pipeline ${s.total_pipeline} = ${fmt(s.pipeline_days_cover)} days, below the ${Math.round(s.po_rop_days)}-day PO point (${poRopExplain}) → order ${s.recommended_po_qty} to reach your ${Math.round(s.po_target_days)}-day total target`,
       );
     }
     return { status: 'ORDER_NOW', why: `At ${fmt(v)}/day: ${parts.join('; ')}.` };

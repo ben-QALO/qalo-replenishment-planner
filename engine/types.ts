@@ -8,7 +8,8 @@ export interface TemplateParams {
   customs_receiving_days: number;
   fba_ship_checkin_days: number;
   safety_days: number;
-  target_cover_days: number;
+  fba_target_cover_days: number;  // order-up-to level for FBA (how much to KEEP at Amazon)
+  target_cover_days: number;      // order-up-to level for the whole pipeline (China PO)
   review_period_fba_days: number;
   review_period_po_days: number;
 }
@@ -143,6 +144,8 @@ export interface SkuResult {
 
   fba_rop_days: number;
   po_rop_days: number;
+  fba_target_days: number;
+  po_target_days: number;
   china_lead_days: number;
   recommended_ship_qty: number;
   recommended_po_qty: number;

@@ -56,12 +56,24 @@ export function chinaLeadDays(t: TemplateParams): number {
   return t.production_days + t.transit_days + t.customs_receiving_days;
 }
 
+// Reorder POINT = the floor you must never drop below before a replenishment can land
+// (lead + one review cycle + safety). Crossing it triggers a shipment/order.
 export function fbaRopDays(t: TemplateParams): number {
   return t.fba_ship_checkin_days + t.review_period_fba_days + t.safety_days;
 }
 
 export function poRopDays(t: TemplateParams): number {
   return chinaLeadDays(t) + t.review_period_po_days + t.safety_days;
+}
+
+// Order-up-to TARGET = the level you refill TO once triggered (never below the reorder
+// point, so a target set too low can't cause a stockout).
+export function fbaTargetDays(t: TemplateParams): number {
+  return Math.max(t.fba_target_cover_days, fbaRopDays(t));
+}
+
+export function poTargetDays(t: TemplateParams): number {
+  return Math.max(t.target_cover_days, poRopDays(t));
 }
 
 // The 1e-9 epsilon keeps float noise (e.g. 14.000000000000014) from inflating a
@@ -98,7 +110,10 @@ export function fbaLane(
   const rop = fbaRopDays(t);
   if (fbaDaysCover >= rop) return { triggered: false, recommended_ship_qty: 0, flags };
 
-  const raw = Math.max(0, velocity * rop - fbaPosition);
+  // Triggered below the reorder point → refill UP TO the FBA target (e.g. 120 days),
+  // not merely back to the floor. This is what builds FBA toward the target level.
+  const target = fbaTargetDays(t);
+  const raw = Math.max(0, velocity * target - fbaPosition);
   let qty = roundUpTo(raw, settings?.case_pack);
   if (qty > warehouseOnHand) {
     qty = roundDownTo(warehouseOnHand, settings?.case_pack);
@@ -137,7 +152,9 @@ export function poLane(
     return { triggered: false, recommended_po_qty: 0, need_by_arrival, place_by_date, flags };
   }
 
-  let qty = Math.max(0, velocity * rop - totalPipeline);
+  // Triggered below the PO reorder point → refill the WHOLE pipeline up to the total target.
+  const target = poTargetDays(t);
+  let qty = Math.max(0, velocity * target - totalPipeline);
   const moq = settings?.moq ?? 0;
   if (qty > 0 && moq > 0 && qty < moq) {
     qty = moq;

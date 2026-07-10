@@ -154,26 +154,26 @@ INSERT INTO state_revision (id, rev) VALUES (1, 0);
 -- ── Built-in scenario templates ────────────────────────────────────────────
 INSERT INTO templates (name, notes, params, is_builtin, created_at, updated_at) VALUES
   ('Ocean – standard',
-   'Typical production run plus standard ocean freight.',
-   '{"production_days":30,"transit_days":30,"customs_receiving_days":10,"fba_ship_checkin_days":10,"safety_days":14,"target_cover_days":120,"review_period_fba_days":14,"review_period_po_days":30}',
+   '45-day production + 14-day freight ≈ 60 days from PO to warehouse; then ~5 weeks warehouse→FBA. Keeps 4 months at FBA, 5 months total.',
+   '{"production_days":45,"transit_days":14,"customs_receiving_days":1,"fba_ship_checkin_days":35,"safety_days":14,"fba_target_cover_days":120,"target_cover_days":150,"review_period_fba_days":14,"review_period_po_days":30}',
    1, datetime('now'), datetime('now')),
   ('Air – expedited',
-   'Air freight for urgent replenishment. Shorter lead, lower safety.',
-   '{"production_days":30,"transit_days":8,"customs_receiving_days":3,"fba_ship_checkin_days":10,"safety_days":7,"target_cover_days":75,"review_period_fba_days":14,"review_period_po_days":30}',
+   'Air freight for urgent replenishment. Shorter China leg, lower safety.',
+   '{"production_days":30,"transit_days":8,"customs_receiving_days":3,"fba_ship_checkin_days":35,"safety_days":7,"fba_target_cover_days":120,"target_cover_days":150,"review_period_fba_days":14,"review_period_po_days":30}',
    1, datetime('now'), datetime('now')),
   ('Chinese New Year buffer',
    'Factory shutdown around CNY: production doubled, extra safety. Use for POs that land Dec–Mar.',
-   '{"production_days":60,"transit_days":30,"customs_receiving_days":10,"fba_ship_checkin_days":10,"safety_days":21,"target_cover_days":160,"review_period_fba_days":14,"review_period_po_days":30}',
+   '{"production_days":60,"transit_days":14,"customs_receiving_days":1,"fba_ship_checkin_days":35,"safety_days":21,"fba_target_cover_days":120,"target_cover_days":180,"review_period_fba_days":14,"review_period_po_days":30}',
    1, datetime('now'), datetime('now')),
   ('Peak season (Q4)',
-   'Port congestion pads transit and customs; tighter review cadence, higher safety.',
-   '{"production_days":30,"transit_days":35,"customs_receiving_days":14,"fba_ship_checkin_days":10,"safety_days":28,"target_cover_days":150,"review_period_fba_days":7,"review_period_po_days":21}',
+   'Port congestion pads transit; tighter review cadence, higher safety.',
+   '{"production_days":45,"transit_days":21,"customs_receiving_days":3,"fba_ship_checkin_days":35,"safety_days":28,"fba_target_cover_days":120,"target_cover_days":170,"review_period_fba_days":7,"review_period_po_days":21}',
    1, datetime('now'), datetime('now'));
 
 -- ── Default settings ───────────────────────────────────────────────────────
 INSERT INTO settings (key, value) VALUES
   ('active_template_id', (SELECT CAST(id AS TEXT) FROM templates WHERE name = 'Ocean – standard')),
-  ('velocity_weights', '{"w7":0.25,"w30":0.45,"w60":0.20,"w90":0.10}'),
+  ('velocity_weights', '{"w7":0.40,"w30":0.40,"w60":0.10,"w90":0.10}'),
   ('global_growth_multiplier', '1.0'),
   ('order_soon_days', '7'),
   ('overstock_factor', '1.5');

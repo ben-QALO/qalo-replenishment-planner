@@ -4,7 +4,7 @@ import type {
 import { resolveVelocity } from './velocity.ts';
 import {
   computePositions, daysOfCover, fbaLane, poLane, earliestArrival,
-  fbaRopDays, poRopDays, chinaLeadDays, COVER_CAP,
+  fbaRopDays, poRopDays, fbaTargetDays, poTargetDays, chinaLeadDays, COVER_CAP,
 } from './replenishment.ts';
 import { assignStatus } from './status.ts';
 import { addDays, diffDays } from './dates.ts';
@@ -121,6 +121,8 @@ export function computeRecommendations(input: EngineInput, today: string): Engin
       pipeline_days_cover: pipelineCover,
       fba_rop_days: fbaRopDays(template),
       po_rop_days: poRopDays(template),
+      fba_target_days: fbaTargetDays(template),
+      po_target_days: poTargetDays(template),
       fbaTriggered: fba.triggered,
       poTriggered: po.triggered,
       recommended_ship_qty: fba.recommended_ship_qty,
@@ -173,6 +175,8 @@ export function computeRecommendations(input: EngineInput, today: string): Engin
       projected_stockout_date: projectedStockout,
       fba_rop_days: fbaRopDays(template),
       po_rop_days: poRopDays(template),
+      fba_target_days: fbaTargetDays(template),
+      po_target_days: poTargetDays(template),
       china_lead_days: chinaLeadDays(template),
       recommended_ship_qty: fba.recommended_ship_qty,
       recommended_po_qty: po.recommended_po_qty,

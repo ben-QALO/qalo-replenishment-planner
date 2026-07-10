@@ -30,6 +30,7 @@ const base = {
 
 test('first commit creates snapshot, SKUs as unclassified, log row, revision bump', () => {
   const db = freshDb();
+  const rev0 = (db.prepare('SELECT rev FROM state_revision').get() as any).rev;
   const r = commitSnapshot(db, { ...base, fileHash: 'h1', lines: [mkLine('A', 10), mkLine('B', 0)] });
   assert.equal(r.replacedPrevious, false);
   assert.deepEqual(r.newSkus.sort(), ['A', 'B']);
@@ -44,7 +45,7 @@ test('first commit creates snapshot, SKUs as unclassified, log row, revision bum
   assert.equal(log.status, 'committed');
   assert.equal(log.new_skus, 2);
   const rev = db.prepare('SELECT rev FROM state_revision').get() as any;
-  assert.equal(rev.rev, 1);
+  assert.equal(rev.rev, rev0 + 1);
 });
 
 test('same-day re-import with a different file replaces lines and bumps snapshot revision', () => {

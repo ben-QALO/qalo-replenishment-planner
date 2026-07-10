@@ -4,7 +4,7 @@ import { currentRecommendations, previewRecommendations, getSetting, setSetting 
 
 const PARAM_KEYS = [
   'production_days', 'transit_days', 'customs_receiving_days', 'fba_ship_checkin_days',
-  'safety_days', 'target_cover_days', 'review_period_fba_days', 'review_period_po_days',
+  'safety_days', 'fba_target_cover_days', 'target_cover_days', 'review_period_fba_days', 'review_period_po_days',
 ];
 
 function validParams(p: any): boolean {

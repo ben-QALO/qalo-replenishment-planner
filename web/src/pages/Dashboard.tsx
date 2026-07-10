@@ -314,14 +314,17 @@ export function Dashboard({ data, worklist, refresh, openSku, go }: {
                                 <>
                                   <div><div className="k">At / heading to Amazon</div><div className="v">{fmtInt(r.fba_position)}</div></div>
                                   <div><div className="k">FBA cover</div><div className="v">{fmtNum(r.fba_days_cover, 0)}d</div></div>
-                                  <div><div className="k">Reorder point</div><div className="v">{r.fba_rop_days}d</div></div>
+                                  <div><div className="k">Reorder at</div><div className="v">{r.fba_rop_days}d</div></div>
+                                  <div><div className="k">FBA target</div><div className="v">{r.fba_target_days}d</div></div>
+                                  <div><div className="k">Warehouse usable</div><div className="v">{fmtInt(r.warehouse_on_hand)}</div></div>
                                   <div><div className="k">Cover after shipping {fmtInt(qty)}</div><div className="v">{r.velocity ? Math.round((r.fba_position + qty) / r.velocity) : '—'}d</div></div>
                                 </>
                               ) : (
                                 <>
                                   <div><div className="k">Total pipeline</div><div className="v">{fmtInt(r.total_pipeline)}</div></div>
                                   <div><div className="k">Pipeline cover</div><div className="v">{fmtNum(r.pipeline_days_cover, 0)}d</div></div>
-                                  <div><div className="k">PO reorder point</div><div className="v">{r.po_rop_days}d</div></div>
+                                  <div><div className="k">Reorder at</div><div className="v">{r.po_rop_days}d</div></div>
+                                  <div><div className="k">Total target</div><div className="v">{r.po_target_days}d</div></div>
                                   <div><div className="k">Need by</div><div className="v">{r.need_by_arrival ?? '—'}</div></div>
                                 </>
                               )}

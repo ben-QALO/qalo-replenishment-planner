@@ -1,15 +1,18 @@
 import type { EngineInput, SnapshotLine, SkuSettings, TemplateParams, VelocityWeights } from '../types.ts';
 
+// Test template keeps the original numbers so existing fixture math stays stable:
+// china_lead = 70, fba_rop = 38, po_rop = 114. fba_target/target = the order-up-to levels.
 export const OCEAN: TemplateParams = {
   production_days: 30, transit_days: 30, customs_receiving_days: 10,
-  fba_ship_checkin_days: 10, safety_days: 14, target_cover_days: 120,
+  fba_ship_checkin_days: 10, safety_days: 14,
+  fba_target_cover_days: 38, target_cover_days: 114,
   review_period_fba_days: 14, review_period_po_days: 30,
 };
-// china_lead = 70, fba_rop = 38, po_rop = 114
 
 export const AIR: TemplateParams = {
   production_days: 30, transit_days: 8, customs_receiving_days: 3,
-  fba_ship_checkin_days: 10, safety_days: 7, target_cover_days: 75,
+  fba_ship_checkin_days: 10, safety_days: 7,
+  fba_target_cover_days: 27, target_cover_days: 74,
   review_period_fba_days: 14, review_period_po_days: 30,
 };
 // china_lead = 41

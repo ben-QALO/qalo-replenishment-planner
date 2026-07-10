@@ -11,7 +11,7 @@ export interface SkuResult {
   your_price: number | null;
   fba_days_cover: number | null; pipeline_days_cover: number | null;
   projected_stockout_date: string | null;
-  fba_rop_days: number; po_rop_days: number; china_lead_days: number;
+  fba_rop_days: number; po_rop_days: number; fba_target_days: number; po_target_days: number; china_lead_days: number;
   recommended_ship_qty: number; recommended_po_qty: number;
   need_by_arrival: string | null; place_by_date: string | null;
   earliest_fba_arrival: string | null; stockout_gap_days: number; air_saves_days: number | null;
