@@ -1,5 +1,8 @@
 # Runtime data — never commit business data
 data/
+# Amazon Business Report / inventory exports dropped in the repo root (real sales data)
+BusinessReport*.csv
+/*.csv
 # Self-provisioned portable Node runtime
 runtime/
 node_modules/

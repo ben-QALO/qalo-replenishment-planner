@@ -35,6 +35,7 @@ export function resolveVelocity(
   globalGrowthMultiplier: number,
   stockoutCorrection: boolean,
   stockoutDays: StockoutDays | undefined,
+  externalDemand?: { units: number; days: number },
 ): VelocityResult {
   const flags: string[] = [];
   const growth = settings?.growth_multiplier ?? globalGrowthMultiplier;
@@ -45,6 +46,20 @@ export function resolveVelocity(
     const base = settings.velocity_override;
     return {
       velocity: base * growth, base_velocity: base, source: 'manual', confidence: 'medium',
+      growth_multiplier: growth, window_rates: emptyRates(line), flags,
+    };
+  }
+
+  // Business Report demand (FBM + FBA) is the truest sales signal — prefer it over the
+  // FBA-only "units shipped" windows. This is what surfaces FBM-tested and OOS-on-FBA
+  // sales that the FBA export can't see. Only used when it actually shows sales.
+  if (externalDemand && externalDemand.units > 0 && externalDemand.days > 0) {
+    flags.push('BUSINESS_REPORT');
+    const base = externalDemand.units / externalDemand.days;
+    const confidence: VelocityConfidence =
+      externalDemand.units >= 10 ? 'high' : externalDemand.units >= 3 ? 'medium' : 'low';
+    return {
+      velocity: base * growth, base_velocity: base, source: 'business_report', confidence,
       growth_multiplier: growth, window_rates: emptyRates(line), flags,
     };
   }

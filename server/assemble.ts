@@ -138,6 +138,19 @@ export function assembleEngineInput(db: Database.Database, overrideTemplateId?: 
     };
   }
 
+  // Business Report demand (FBM + FBA), joined child ASIN → SKU. A SKU with no ASIN or no
+  // matching report row simply falls back to the FBA-only velocity path.
+  const externalRows = db.prepare('SELECT asin, units, window_days FROM external_sales').all() as
+    { asin: string; units: number; window_days: number }[];
+  const demandByAsin = new Map<string, { units: number; days: number }>();
+  for (const r of externalRows) demandByAsin.set(String(r.asin).toUpperCase(), { units: r.units, days: r.window_days });
+  const externalDemand: Record<string, { units: number; days: number }> = {};
+  for (const r of skuRows) {
+    if (!r.asin) continue;
+    const d = demandByAsin.get(String(r.asin).trim().toUpperCase());
+    if (d) externalDemand[r.sku] = d;
+  }
+
   // Net open transfers against both files (pure, per-SKU — see engine/transfers.ts):
   //  - warehouse is netted only for transfers THIS sku's import hasn't reflected yet
   //    (per-SKU cutoff — a global one would double-count when other SKUs are updated or
@@ -185,6 +198,7 @@ export function assembleEngineInput(db: Database.Database, overrideTemplateId?: 
     stockoutCorrection: (getSetting(db, 'stockout_correction') ?? '1') === '1',
     stockoutDays: computeStockoutDays(db, snapshot.snapshot_date),
     inTransitToFba,
+    externalDemand,
   };
 }
 

@@ -118,15 +118,15 @@ export function AllSkus({ data, refresh, openSku, initialStatus, initialFlag }: 
                 <th style={{ width: 210 }} onClick={() => toggleSort('sku')}>SKU{arrow('sku')}</th>
                 <th style={{ width: 130 }} onClick={() => toggleSort('status')}>Status{arrow('status')}</th>
                 <th style={{ width: 105 }} onClick={() => toggleSort('classification')}>Class{arrow('classification')}</th>
-                <th className="num" style={{ width: 76 }} onClick={() => toggleSort('velocity')}>u/day{arrow('velocity')}</th>
-                <th className="num" style={{ width: 68 }} onClick={() => toggleSort('fba_available')}>FBA{arrow('fba_available')}</th>
-                <th className="num" style={{ width: 68 }} onClick={() => toggleSort('fba_inbound')}>Inbnd{arrow('fba_inbound')}</th>
-                <th className="num" style={{ width: 68 }} onClick={() => toggleSort('warehouse_on_hand')}>WH{arrow('warehouse_on_hand')}</th>
-                <th className="num" style={{ width: 68 }} onClick={() => toggleSort('open_po_units')}>On PO{arrow('open_po_units')}</th>
-                <th className="num" style={{ width: 84 }} onClick={() => toggleSort('fba_days_cover')}>FBA cover{arrow('fba_days_cover')}</th>
-                <th className="num" style={{ width: 84 }} onClick={() => toggleSort('pipeline_days_cover')}>Pipe cover{arrow('pipeline_days_cover')}</th>
-                <th className="num" style={{ width: 76 }} onClick={() => toggleSort('recommended_ship_qty')}>Ship{arrow('recommended_ship_qty')}</th>
-                <th className="num" style={{ width: 76 }} onClick={() => toggleSort('recommended_po_qty')}>PO{arrow('recommended_po_qty')}</th>
+                <th className="num" style={{ width: 76 }} onClick={() => toggleSort('velocity')} title="Units sold per day">Sold/day{arrow('velocity')}</th>
+                <th className="num" style={{ width: 68 }} onClick={() => toggleSort('fba_available')} title="Sellable now at Amazon">At Amazon{arrow('fba_available')}</th>
+                <th className="num" style={{ width: 68 }} onClick={() => toggleSort('fba_inbound')} title="On the way to Amazon">Incoming{arrow('fba_inbound')}</th>
+                <th className="num" style={{ width: 68 }} onClick={() => toggleSort('warehouse_on_hand')} title="Units in your warehouse">Warehouse{arrow('warehouse_on_hand')}</th>
+                <th className="num" style={{ width: 68 }} onClick={() => toggleSort('open_po_units')} title="Units on order from China">On order{arrow('open_po_units')}</th>
+                <th className="num" style={{ width: 84 }} onClick={() => toggleSort('fba_days_cover')} title="Days of stock left at Amazon">Days at Amazon{arrow('fba_days_cover')}</th>
+                <th className="num" style={{ width: 84 }} onClick={() => toggleSort('pipeline_days_cover')} title="Days of stock left across everything">Days total{arrow('pipeline_days_cover')}</th>
+                <th className="num" style={{ width: 76 }} onClick={() => toggleSort('recommended_ship_qty')} title="Units to ship to Amazon">To ship{arrow('recommended_ship_qty')}</th>
+                <th className="num" style={{ width: 76 }} onClick={() => toggleSort('recommended_po_qty')} title="Units to order from China">To order{arrow('recommended_po_qty')}</th>
                 <th className="plain">Flags</th>
               </tr>
             </thead>
@@ -194,7 +194,7 @@ export function AllSkus({ data, refresh, openSku, initialStatus, initialFlag }: 
             <option value="case_pack">Set case pack</option>
             <option value="moq">Set MOQ</option>
             <option value="order_multiple">Set order multiple</option>
-            <option value="velocity_override">Set velocity override</option>
+            <option value="velocity_override">Set sales rate (sold/day)</option>
             <option value="growth_multiplier">Set growth multiplier</option>
             <option value="clear_overrides">Clear all overrides</option>
           </select>

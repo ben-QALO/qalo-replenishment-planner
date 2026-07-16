@@ -1,7 +1,36 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { api, fmtInt, fmtNum, type SkusResponse, type SkuResult } from '../api.ts';
-import { StatusBadge, Flags, toast, downloadCsv } from '../components/ui.tsx';
-import { CatalogDotMap, CountUp } from '../components/charts.tsx';
+import { api, fmtInt, fmtNum, STATUS_META, STATUS_TIERS, type SkusResponse, type SkuResult } from '../api.ts';
+import { StatusBadge, Flags, toast, confirmDialog } from '../components/ui.tsx';
+import { CountUp, ScoreGauge } from '../components/charts.tsx';
+
+const ShipIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M12 19V5M6 11l6-6 6 6" />
+  </svg>
+);
+const OrderIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M3 8l9-5 9 5v8l-9 5-9-5V8z" /><path d="M3 8l9 5 9-5M12 13v8" />
+  </svg>
+);
+const ReconcileIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M21 12a9 9 0 0 1-9 9 9 9 0 0 1-8-5M3 12a9 9 0 0 1 9-9 9 9 0 0 1 8 5" /><path d="M20 4v4h-4M4 20v-4h4" />
+  </svg>
+);
+
+interface StatCardProps { label: string; value: number; sub: string; color: string; pct: number; icon: React.ReactNode; onClick: () => void; }
+function StatCard({ label, value, sub, color, pct, icon, onClick }: StatCardProps) {
+  return (
+    <button className="stat-card" style={{ ['--card-c' as any]: color }} onClick={onClick}>
+      <div className="sc-top"><span className="sc-icon">{icon}</span></div>
+      <div className="sc-label">{label}</div>
+      <div className="sc-n"><CountUp value={value} /></div>
+      <div className="sc-sub">{sub}</div>
+      <div className="sc-bar"><span style={{ width: `${Math.max(3, Math.min(100, pct * 100))}%` }} /></div>
+    </button>
+  );
+}
 
 const Chevron = () => (
   <svg width="11" height="11" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -12,6 +41,7 @@ const Chevron = () => (
 type QueueKey = 'ship' | 'po' | 'risk';
 
 interface Worklist {
+  transfers_to_review: number; transfers_to_send: number;
   transfers_to_reconcile: number; transfers_look_inbound: number; transfers_open_total: number;
   pos_to_action: number; new_products: number; no_velocity: number; total: number;
 }
@@ -36,18 +66,21 @@ export function Dashboard({ data, worklist, refresh, openSku, go }: {
   const s = data.summary;
   const results = data.results;
 
+  // Default order across every queue: best sellers first (most units sold per day),
+  // tie-broken by revenue per day.
+  const byBestSeller = (a: SkuResult, b: SkuResult) =>
+    (b.velocity ?? 0) - (a.velocity ?? 0) || (b.daily_revenue - a.daily_revenue);
+
   const shipRows = useMemo(() =>
-    results.filter(r => r.include_in_plans && r.recommended_ship_qty > 0)
-      .sort((a, b) => (a.fba_days_cover ?? 9999) - (b.fba_days_cover ?? 9999)),
+    results.filter(r => r.include_in_plans && r.recommended_ship_qty > 0).sort(byBestSeller),
     [results]);
   const poRows = useMemo(() =>
-    results.filter(r => r.include_in_plans && r.recommended_po_qty > 0)
-      .sort((a, b) => (a.place_by_date ?? '9999').localeCompare(b.place_by_date ?? '9999')),
+    results.filter(r => r.include_in_plans && r.recommended_po_qty > 0).sort(byBestSeller),
     [results]);
   const riskRows = useMemo(() =>
     results.filter(r => r.status === 'AT_RISK' || r.status === 'UNCLASSIFIED'
       || (r.status === 'STOCKOUT' && r.recommended_ship_qty === 0 && r.classification === 'replenishable'))
-      .sort((a, b) => b.risk_score - a.risk_score),
+      .sort(byBestSeller),
     [results]);
 
   const activeRows = queue === 'ship' ? shipRows : queue === 'po' ? poRows : riskRows;
@@ -80,41 +113,56 @@ export function Dashboard({ data, worklist, refresh, openSku, go }: {
   );
 
   const qtyOf = (r: SkuResult) => edited[`${queue}:${r.sku}`] ?? (queue === 'ship' ? r.recommended_ship_qty : r.recommended_po_qty);
-  const selectedRows = activeRows.filter(r => !unchecked[`${queue}:${r.sku}`] && qtyOf(r) > 0);
+  const selectableRows = activeRows.filter(r => qtyOf(r) > 0);
+  const selectedRows = selectableRows.filter(r => !unchecked[`${queue}:${r.sku}`]);
   const totalUnits = selectedRows.reduce((t, r) => t + qtyOf(r), 0);
+  const allSelected = selectableRows.length > 0 && selectedRows.length === selectableRows.length;
+
+  function toggleSelectAll() {
+    const keys = selectableRows.map(r => `${queue}:${r.sku}`);
+    setUnchecked(u => {
+      const next = { ...u };
+      if (allSelected) keys.forEach(k => { next[k] = true; });   // clear all
+      else keys.forEach(k => { delete next[k]; });               // select all
+      return next;
+    });
+  }
 
   async function submitTransfers() {
     if (selectedRows.length === 0) return;
-    if (!window.confirm(`Submit a transfer request for ${selectedRows.length} SKUs (${fmtInt(totalUnits)} units)?\n\nThis drops the units from usable warehouse stock now, and downloads the request file for the inventory team. You'll reconcile each one next session once it's inbound in Amazon.`)) return;
+    if (!await confirmDialog({
+      title: `Create a transfer request for ${selectedRows.length} products?`,
+      body: `${fmtInt(totalUnits)} units.\n\nThis starts a request the inventory team can review and adjust under Transfers & POs → Transfers to FBA. Nothing leaves your warehouse until it's finalized and sent.`,
+      confirmLabel: 'Create request',
+    })) return;
     setBusy(true);
     try {
       const lines = selectedRows.map(r => ({ sku: r.sku, qty: qtyOf(r) }));
-      const res = await api.post<{ filename: string; csv: string; total_units: number }>('/api/transfers/submit', { lines });
-      downloadCsv(res.filename, res.csv);
-      toast(`Transfer request submitted — ${fmtInt(res.total_units)} units across ${lines.length} SKUs. Warehouse updated.`);
+      const res = await api.post<{ total_units: number; line_count: number }>('/api/transfers/propose', { lines });
+      toast(`Request created — ${fmtInt(res.total_units)} units across ${res.line_count} products. The inventory team can review it under Transfers & POs → Transfers to FBA.`);
       setEdited({}); setUnchecked({});
       refresh();
     } catch (err: any) {
-      toast(`Submit failed: ${err.message}`);
+      toast(`Create failed: ${err.message}`);
     } finally { setBusy(false); }
   }
 
-  async function exportPoProposal() {
+  async function proposePo() {
     if (selectedRows.length === 0) return;
+    if (!await confirmDialog({
+      title: `Create a PO for review for ${selectedRows.length} products?`,
+      body: `${fmtInt(totalUnits)} units.\n\nThis starts a China PO the team can review and adjust under Transfers & POs → China POs. Nothing is ordered until it's finalized and placed.`,
+      confirmLabel: 'Create PO for review',
+    })) return;
     setBusy(true);
     try {
-      const lines = selectedRows.map(r => ({ sku: r.sku, qty_recommended: r.recommended_po_qty, qty_final: qtyOf(r) }));
-      const res = await api.post<{ id: number; filename: string; csv: string; total_units: number }>('/api/plans', { kind: 'china_po', lines });
-      downloadCsv(res.filename, res.csv);
-      toast(`${res.filename} — ${fmtInt(res.total_units)} units across ${lines.length} SKUs`);
-      if (window.confirm('Also create a draft purchase order from this proposal?')) {
-        await api.post(`/api/plans/${res.id}/create-po`);
-        toast('Draft PO created — set its number and ETA under Warehouse & POs.');
-      }
+      const lines = selectedRows.map(r => ({ sku: r.sku, qty: qtyOf(r) }));
+      const res = await api.post<{ total_units: number; line_count: number }>('/api/pos/propose', { lines });
+      toast(`PO for review created — ${fmtInt(res.total_units)} units across ${res.line_count} products. Review it under Transfers & POs → China POs.`);
       setEdited({}); setUnchecked({});
       refresh();
     } catch (err: any) {
-      toast(`Export failed: ${err.message}`);
+      toast(`Create failed: ${err.message}`);
     } finally { setBusy(false); }
   }
 
@@ -133,13 +181,52 @@ export function Dashboard({ data, worklist, refresh, openSku, go }: {
 
   if (!s) return null;
 
+  // Count per status TIER, for the catalog-map families (keyed to STATUS_META tiers).
+  // The score, rings, and catalog map are scoped to the SKUs you actively keep in
+  // stock (classification 'replenishable') — the same set the To ship / To order plan
+  // rings use. New/undecided and discontinued items are left out so they don't distort
+  // readiness. Status counts are tallied from those rows directly.
+  const keepInStock = useMemo(() => results.filter(r => r.classification === 'replenishable'), [results]);
+  const countOf = useMemo(() => {
+    const c: Record<string, number> = {
+      STOCKOUT: 0, CRITICAL: 0, ORDER_NOW: 0, ORDER_SOON: 0,
+      OK: 0, OVERSTOCK: 0, AT_RISK: 0, UNCLASSIFIED: 0, NOT_REPLENISHABLE: 0,
+    };
+    for (const r of keepInStock) c[r.status] = (c[r.status] ?? 0) + 1;
+    return c;
+  }, [keepInStock]);
+
+  const activeTotal = keepInStock.length;
+  const share = (n: number) => (activeTotal === 0 ? 0 : n / activeTotal);
+
+  // In-Stock Score — of the sales you're making, what share is on SKUs that are actually
+  // in stock at Amazon. Weighted by velocity, so a top seller going dark hurts far more
+  // than a trickle seller. A stockout you physically cannot fix this cycle — the warehouse
+  // holds less than one full case, so nothing is shippable — is left out entirely rather
+  // than counted against you.
+  const settingsMap = data.settings ?? {};
+  const blockedByCasePack = (r: SkuResult): boolean => {
+    const cp = settingsMap[r.sku]?.case_pack ?? 0;
+    return r.fba_available === 0 && r.recommended_ship_qty === 0
+      && cp > 1 && r.warehouse_on_hand > 0 && r.warehouse_on_hand < cp;
+  };
+  const selling = keepInStock.filter(r => (r.velocity ?? 0) > 0);
+  const scored = selling.filter(r => !blockedByCasePack(r));
+  const wTotal = scored.reduce((sum, r) => sum + (r.velocity ?? 0), 0);
+  const wInStock = scored.reduce((sum, r) => sum + (r.fba_available > 0 ? (r.velocity ?? 0) : 0), 0);
+  const inStockScore = wTotal === 0 ? 100 : Math.round(100 * wInStock / wTotal);
+  const excludedCasePack = selling.length - scored.length;
+
   const wl = worklist;
+  const reconcileCount = (wl?.transfers_to_reconcile ?? 0) + (wl?.transfers_look_inbound ?? 0);
   const wlItems = wl ? [
+    { n: wl.transfers_to_review, label: 'requests to review', hint: 'inventory team: check & adjust quantities', hash: '#/warehouse?tab=transfers', tone: 'var(--po)' },
+    { n: wl.transfers_to_send, label: 'requests to send', hint: 'Amazon team: finalize & send to the warehouse', hash: '#/warehouse?tab=transfers', tone: 'var(--ship)' },
     { n: wl.transfers_to_reconcile, label: 'transfers to reconcile', hint: 'confirm created & inbound in Amazon', hash: '#/warehouse?tab=transfers', tone: 'var(--po)' },
     { n: wl.transfers_look_inbound, label: 'look inbound — reconcile', hint: 'Amazon appears to show these', hash: '#/warehouse?tab=transfers', tone: 'var(--ship)' },
     { n: wl.pos_to_action, label: 'POs to update', hint: 'draft to send, or overdue', hash: '#/warehouse?tab=pos', tone: 'var(--atrisk)' },
     { n: wl.new_products, label: 'new products to classify', hint: 'keep or ignore', hash: '#/skus?status=UNCLASSIFIED', tone: 'var(--atrisk)' },
-    { n: wl.no_velocity, label: 'missing sales velocity', hint: 'set an expected rate', hash: '#/skus?flag=NO_VELOCITY', tone: 'var(--stockout)' },
+    { n: wl.no_velocity, label: 'missing a sales rate', hint: 'set expected units sold per day', hash: '#/skus?flag=NO_VELOCITY', tone: 'var(--stockout)' },
   ].filter(i => i.n > 0) : [];
 
   const coverClass = (d: number | null) => d === null ? '' : d < 14 ? 'q-cover hot' : d < 30 ? 'q-cover warn' : 'q-cover';
@@ -161,33 +248,50 @@ export function Dashboard({ data, worklist, refresh, openSku, go }: {
         </div>
       )}
 
-      <div className="summary">
-        <div className="sum-alert">
-          <button className="sum-fig" style={{ ['--sf-c' as any]: 'var(--danger)' }} onClick={() => setQueue('ship')}>
-            <div className="n"><CountUp value={s.stockout} /></div>
-            <div className="lbl">Stocked out</div>
-            <div className="sub">selling, zero at Amazon</div>
-          </button>
-          <button className="sum-fig" style={{ ['--sf-c' as any]: 'var(--danger)' }} onClick={() => setQueue('po')}>
-            <div className="n"><CountUp value={s.critical} /></div>
-            <div className="lbl">Will stock out</div>
-            <div className="sub">gap even if you act today</div>
-          </button>
-        </div>
-        <div className="sum-map">
-          <div className="sum-map-head">
-            <span className="wl-title">Catalog · {fmtInt(s.ok + s.stockout + s.critical + s.order_now + s.order_soon + s.at_risk + s.overstock + s.unclassified)} SKUs</span>
-            <div className="map-legend">
-              <span><i className="tone-danger" />{fmtInt(s.stockout + s.critical)} urgent</span>
-              <span><i className="tone-ink" />{fmtInt(s.order_now + s.order_soon)} to order</span>
-              <span><i className="tone-mid" />{fmtInt(s.ok)} healthy</span>
-              <span><i className="tone-faint" />{fmtInt(s.overstock)} overstock</span>
-              <span><i className="tone-ring" />{fmtInt(s.at_risk + s.unclassified)} at risk</span>
+      <div className="home-top">
+        <div className="summary score-block">
+          <div className="sum-hero">
+            <ScoreGauge score={inStockScore} eyebrow="IN STOCK"
+              caption={excludedCasePack > 0
+                ? `sales-weighted · ${excludedCasePack} case-pack-blocked excluded`
+                : 'of sales, weighted by top sellers'} />
+            <div className="hero-alerts">
+              <button className="sum-fig" style={{ ['--sf-c' as any]: 'var(--danger)' }} onClick={() => setQueue('ship')}>
+                <div className="n"><CountUp value={countOf.STOCKOUT} /></div>
+                <div className="lbl">{STATUS_META.STOCKOUT.label}</div>
+                <div className="sub">selling, zero at Amazon</div>
+              </button>
+              <button className="sum-fig" style={{ ['--sf-c' as any]: 'var(--danger)' }} onClick={() => setQueue('po')}>
+                <div className="n"><CountUp value={countOf.CRITICAL} /></div>
+                <div className="lbl">{STATUS_META.CRITICAL.label}</div>
+                <div className="sub">gap even if you act today</div>
+              </button>
             </div>
           </div>
-          <CatalogDotMap results={results} onPick={(status) => go(`#/skus?status=${status}`)} />
+        </div>
+
+        <div className="stat-cards side">
+          <StatCard label="To ship" value={s.ship_units_total} sub={`units to Amazon · ${fmtInt(s.ship_skus)} SKUs`}
+            color="var(--c-ship)" pct={share(s.ship_skus)} icon={<ShipIcon />} onClick={() => setQueue('ship')} />
+          <StatCard label="To order" value={s.po_units_total} sub={`units from China · ${fmtInt(s.po_skus)} SKUs`}
+            color="var(--c-order)" pct={share(s.po_skus)} icon={<OrderIcon />} onClick={() => setQueue('po')} />
+          <StatCard label="To reconcile" value={reconcileCount} sub="transfers to confirm inbound"
+            color="var(--c-health)" pct={wl && wl.transfers_open_total > 0 ? reconcileCount / wl.transfers_open_total : 0}
+            icon={<ReconcileIcon />} onClick={() => go('#/warehouse?tab=transfers')} />
         </div>
       </div>
+
+      <details className="status-key">
+        <summary>What the labels mean</summary>
+        <div className="status-key-grid">
+          {STATUS_TIERS.map(t => (
+            <div key={t} className="status-key-row">
+              <StatusBadge status={t} />
+              <span>{STATUS_META[t].help}</span>
+            </div>
+          ))}
+        </div>
+      </details>
 
       <div className="card">
         <div className="card-head">
@@ -197,17 +301,20 @@ export function Dashboard({ data, worklist, refresh, openSku, go }: {
             <button className={queue === 'po' ? 'on' : ''} style={{ ['--seg-c' as any]: 'var(--po)' }} onClick={() => setQueue('po')}>
               China PO <span className="seg-n">{poRows.length}</span></button>
             <button className={queue === 'risk' ? 'on' : ''} style={{ ['--seg-c' as any]: 'var(--atrisk)' }} onClick={() => setQueue('risk')}>
-              At risk <span className="seg-n">{riskRows.length}</span></button>
+              Needs info <span className="seg-n">{riskRows.length}</span></button>
           </div>
           <div className="spacer" />
           {queue !== 'risk' && (
             <>
+              <button className="btn sm" disabled={selectableRows.length === 0} onClick={toggleSelectAll}>
+                {allSelected ? 'Clear all' : 'Select all'}
+              </button>
               <span className="mono" style={{ fontSize: 11.5, color: 'var(--muted)' }}>
                 {selectedRows.length} selected · {fmtInt(totalUnits)} units
               </span>
               <button className="btn primary" disabled={busy || selectedRows.length === 0}
-                onClick={queue === 'ship' ? submitTransfers : exportPoProposal}>
-                {queue === 'ship' ? 'Submit transfer request' : 'Export PO proposal'}
+                onClick={queue === 'ship' ? submitTransfers : proposePo}>
+                {queue === 'ship' ? 'Create transfer for review' : 'Create PO for review'}
               </button>
             </>
           )}
@@ -216,9 +323,9 @@ export function Dashboard({ data, worklist, refresh, openSku, go }: {
         <div style={{ maxHeight: 560, overflowY: 'auto' }}>
           {activeRows.length === 0 ? (
             <div className="empty">
-              {queue === 'ship' && 'Nothing to ship — either FBA is covered, or the warehouse is empty (enter warehouse stock under Warehouse & POs).'}
+              {queue === 'ship' && 'Nothing to ship — either FBA is covered, or the warehouse is empty (import your NetSuite warehouse report on the Imports page).'}
               {queue === 'po' && 'No PO recommendations right now.'}
-              {queue === 'risk' && 'No data problems. Everything is classified and has a velocity.'}
+              {queue === 'risk' && 'No data problems. Everything is classified and has a sales rate.'}
             </div>
           ) : queue === 'risk' ? (
             <table className="data">
@@ -255,13 +362,13 @@ export function Dashboard({ data, worklist, refresh, openSku, go }: {
               <thead><tr>
                 <th className="plain" style={{ width: 26 }}></th>
                 <th className="plain" style={{ width: 28 }}></th>
-                <Th k="sku" label="SKU" />
+                <Th k="sku" label="Product" />
                 <Th k="status" label="Status" />
-                <Th k="velocity" label="u/day" cls="num" />
+                <Th k="velocity" label="Sold/day" cls="num" />
                 {queue === 'ship' ? (
-                  <><Th k="fba_days_cover" label="FBA cover" cls="num" /><Th k="warehouse_on_hand" label="Warehouse" cls="num" /><Th k="recommended_ship_qty" label="Ship qty" cls="num" /></>
+                  <><Th k="fba_days_cover" label="Days left at Amazon" cls="num" /><Th k="warehouse_on_hand" label="In warehouse" cls="num" /><Th k="recommended_ship_qty" label="Units to ship" cls="num" /></>
                 ) : (
-                  <><Th k="pipeline_days_cover" label="Pipeline cover" cls="num" /><Th k="place_by_date" label="Place by" /><Th k="recommended_po_qty" label="PO qty" cls="num" /></>
+                  <><Th k="pipeline_days_cover" label="Days left (total)" cls="num" /><Th k="place_by_date" label="Order by" /><Th k="recommended_po_qty" label="Units to order" cls="num" /></>
                 )}
               </tr></thead>
               <tbody>
@@ -309,23 +416,22 @@ export function Dashboard({ data, worklist, refresh, openSku, go }: {
                            <div className="q-detail-inner">
                             <div className="why">{r.why}</div>
                             <div className="math">
-                              <div><div className="k">Velocity</div><div className="v">{fmtNum(r.velocity)}/day</div></div>
+                              <div><div className="k">Sold/day</div><div className="v">{fmtNum(r.velocity)}</div></div>
                               {queue === 'ship' ? (
                                 <>
                                   <div><div className="k">At / heading to Amazon</div><div className="v">{fmtInt(r.fba_position)}</div></div>
-                                  <div><div className="k">FBA cover</div><div className="v">{fmtNum(r.fba_days_cover, 0)}d</div></div>
-                                  <div><div className="k">Reorder at</div><div className="v">{r.fba_rop_days}d</div></div>
-                                  <div><div className="k">FBA target</div><div className="v">{r.fba_target_days}d</div></div>
-                                  <div><div className="k">Warehouse usable</div><div className="v">{fmtInt(r.warehouse_on_hand)}</div></div>
-                                  <div><div className="k">Cover after shipping {fmtInt(qty)}</div><div className="v">{r.velocity ? Math.round((r.fba_position + qty) / r.velocity) : '—'}d</div></div>
+                                  <div><div className="k">Days of stock left</div><div className="v">{fmtNum(r.fba_days_cover, 0)}d</div></div>
+                                  <div><div className="k">Need to hit goal</div><div className="v">{fmtInt(r.transfer_required)}</div></div>
+                                  <div><div className="k">Warehouse can spare</div><div className="v">{fmtInt(r.transfer_safe)}</div></div>
+                                  {r.transfer_shortage > 0 && <div><div className="k" style={{ color: 'var(--stockout)' }}>Short by</div><div className="v" style={{ color: 'var(--stockout)' }}>{fmtInt(r.transfer_shortage)}</div></div>}
+                                  <div><div className="k">Stock when it lands</div><div className="v">{r.velocity && r.fba_days_cover !== null ? `${Math.round(r.fba_target_days)}d goal` : '—'}</div></div>
                                 </>
                               ) : (
                                 <>
-                                  <div><div className="k">Total pipeline</div><div className="v">{fmtInt(r.total_pipeline)}</div></div>
-                                  <div><div className="k">Pipeline cover</div><div className="v">{fmtNum(r.pipeline_days_cover, 0)}d</div></div>
-                                  <div><div className="k">Reorder at</div><div className="v">{r.po_rop_days}d</div></div>
-                                  <div><div className="k">Total target</div><div className="v">{r.po_target_days}d</div></div>
-                                  <div><div className="k">Need by</div><div className="v">{r.need_by_arrival ?? '—'}</div></div>
+                                  <div><div className="k">Total across pipeline</div><div className="v">{fmtInt(r.total_pipeline)}</div></div>
+                                  <div><div className="k">Days of stock left</div><div className="v">{fmtNum(r.pipeline_days_cover, 0)}d</div></div>
+                                  <div><div className="k">Lands at warehouse</div><div className="v">{r.need_by_arrival ?? '—'}</div></div>
+                                  <div><div className="k">Place order by</div><div className="v">{r.place_by_date ?? '—'}</div></div>
                                 </>
                               )}
                               <div style={{ alignSelf: 'flex-end' }}>

@@ -8,8 +8,9 @@ export interface TemplateParams {
   customs_receiving_days: number;
   fba_ship_checkin_days: number;
   safety_days: number;
-  fba_target_cover_days: number;  // order-up-to level for FBA (how much to KEEP at Amazon)
-  target_cover_days: number;      // order-up-to level for the whole pipeline (China PO)
+  fba_target_cover_days: number;  // FBA goal — days to hold at Amazon (refill to this as a shipment lands)
+  warehouse_buffer_days: number;  // reserve to hold at the own warehouse; also sizes China POs
+  target_cover_days: number;      // overstock ceiling for the whole pipeline; floored at the derived minimum (does not drive ordering)
   review_period_fba_days: number;
   review_period_po_days: number;
 }
@@ -98,6 +99,12 @@ export interface EngineInput {
    * These are "coming to FBA" but may not yet show in Amazon's inbound (the prep gap).
    */
   inTransitToFba?: Record<string, number>;
+  /**
+   * True total demand from the Amazon Business Report (FBM + FBA), by SKU: units sold over
+   * a window. Preferred over the FBA-only "units shipped" windows when present, so OOS and
+   * FBM-tested items show their real sales rate.
+   */
+  externalDemand?: Record<string, { units: number; days: number }>;
 }
 
 export type StatusTier =
@@ -111,7 +118,7 @@ export type StatusTier =
   | 'UNCLASSIFIED'
   | 'NOT_REPLENISHABLE';
 
-export type VelocitySource = 'manual' | 'report' | 'none';
+export type VelocitySource = 'manual' | 'business_report' | 'report' | 'none';
 export type VelocityConfidence = 'high' | 'medium' | 'low' | 'none';
 
 export interface SkuResult {
@@ -148,6 +155,12 @@ export interface SkuResult {
   po_target_days: number;
   china_lead_days: number;
   recommended_ship_qty: number;
+  /** Units it would take to hit the FBA target when the shipment lands (before the buffer cap). */
+  transfer_required: number;
+  /** Units the warehouse can spare above its reserve. */
+  transfer_safe: number;
+  /** required − safe: how many units short the warehouse is (0 when it can cover). */
+  transfer_shortage: number;
   recommended_po_qty: number;
   need_by_arrival: string | null;
   place_by_date: string | null;

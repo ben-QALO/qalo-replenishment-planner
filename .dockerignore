@@ -1,0 +1,8 @@
+node_modules
+web/dist
+data
+runtime
+.git
+*.log
+.DS_Store
+.claude

@@ -12,7 +12,8 @@ export interface SkuResult {
   fba_days_cover: number | null; pipeline_days_cover: number | null;
   projected_stockout_date: string | null;
   fba_rop_days: number; po_rop_days: number; fba_target_days: number; po_target_days: number; china_lead_days: number;
-  recommended_ship_qty: number; recommended_po_qty: number;
+  recommended_ship_qty: number; transfer_required: number; transfer_safe: number; transfer_shortage: number;
+  recommended_po_qty: number;
   need_by_arrival: string | null; place_by_date: string | null;
   earliest_fba_arrival: string | null; stockout_gap_days: number; air_saves_days: number | null;
   status: string; flags: string[]; why: string; risk_score: number; daily_revenue: number;
@@ -63,17 +64,40 @@ export const api = {
   },
 };
 
-export const STATUS_META: Record<string, { label: string; c: string; bg: string }> = {
-  STOCKOUT: { label: 'Stocked out', c: 'var(--stockout)', bg: 'var(--stockout-bg)' },
-  CRITICAL: { label: 'Critical', c: 'var(--critical)', bg: 'var(--critical-bg)' },
-  ORDER_NOW: { label: 'Order now', c: 'var(--ship)', bg: 'var(--ship-bg)' },
-  ORDER_SOON: { label: 'Order soon', c: 'var(--po)', bg: 'var(--po-bg)' },
-  AT_RISK: { label: 'At risk', c: 'var(--atrisk)', bg: 'var(--atrisk-bg)' },
-  OVERSTOCK: { label: 'Overstock', c: 'var(--overstock)', bg: 'var(--overstock-bg)' },
-  OK: { label: 'OK', c: 'var(--ok)', bg: 'var(--ok-bg)' },
-  UNCLASSIFIED: { label: 'New — classify', c: 'var(--atrisk)', bg: 'var(--atrisk-bg)' },
-  NOT_REPLENISHABLE: { label: 'Not replenished', c: 'var(--neutral)', bg: 'var(--neutral-bg)' },
+/**
+ * THE SINGLE SOURCE OF TRUTH for status vocabulary. One entry per status the engine emits.
+ * Every label, one-line definition, colour, and catalog-map grouping in the whole app is
+ * read from here — nothing else may invent a status word or a synonym. `tone` groups the
+ * nine states into the five families the catalog map and legend show.
+ *
+ * The ladder (worst → best for a stocked product): Out of stock → Will run out → Act now →
+ * Act soon → Healthy → Overstocked. Plus three non-plan states: Needs info, New, Not stocked.
+ */
+export type StatusTone = 'danger' | 'act' | 'healthy' | 'over' | 'info' | 'neutral';
+export const STATUS_META: Record<string, { label: string; tone: StatusTone; c: string; bg: string; help: string }> = {
+  STOCKOUT:          { label: 'Out of stock', tone: 'danger', c: 'var(--stockout)', bg: 'var(--stockout-bg)', help: 'Selling, but zero at Amazon right now — losing sales today.' },
+  CRITICAL:          { label: 'Will run out', tone: 'danger', c: 'var(--critical)', bg: 'var(--critical-bg)', help: 'Will run dry before any restock can arrive, even if you act today — air-freight to close the gap.' },
+  ORDER_NOW:         { label: 'Act now',      tone: 'act',    c: 'var(--ship)', bg: 'var(--ship-bg)', help: 'Ship and/or order this cycle to stay in stock.' },
+  ORDER_SOON:        { label: 'Act soon',     tone: 'act',    c: 'var(--po)', bg: 'var(--po-bg)', help: 'Fine for now — plan to ship or order within the next cycle.' },
+  OK:                { label: 'Healthy',      tone: 'healthy', c: 'var(--ok)', bg: 'var(--ok-bg)', help: 'In stock and on plan. Any quantity shown is a routine top-up.' },
+  OVERSTOCK:         { label: 'Overstocked',  tone: 'over',   c: 'var(--overstock)', bg: 'var(--overstock-bg)', help: 'Far more than you’ll need for a long time — pause ordering.' },
+  AT_RISK:           { label: 'Needs info',   tone: 'info',   c: 'var(--atrisk)', bg: 'var(--atrisk-bg)', help: 'Missing a sales rate or a recent import — can’t be planned until you fix it.' },
+  UNCLASSIFIED:      { label: 'New',          tone: 'info',   c: 'var(--atrisk)', bg: 'var(--atrisk-bg)', help: 'New product from the last import — mark it replenish or ignore.' },
+  NOT_REPLENISHABLE: { label: 'Not stocked',  tone: 'neutral', c: 'var(--neutral)', bg: 'var(--neutral-bg)', help: 'Set to ignore or discontinued — no recommendations.' },
 };
+
+/** Order the states are listed in the on-screen status key. */
+export const STATUS_TIERS = ['STOCKOUT', 'CRITICAL', 'ORDER_NOW', 'ORDER_SOON', 'OK', 'OVERSTOCK', 'AT_RISK', 'UNCLASSIFIED', 'NOT_REPLENISHABLE'] as const;
+
+/** The five catalog-map families (a grouping of the tiers by tone), in display order.
+ *  Names reuse the ladder's own words — no second vocabulary. `cls` is the dot-map colour. */
+export const TONE_FAMILY: { tone: StatusTone; label: string; cls: string; tiers: string[] }[] = [
+  { tone: 'danger',  label: 'Out / will run out', cls: 'tone-danger', tiers: ['STOCKOUT', 'CRITICAL'] },
+  { tone: 'act',     label: 'Act now / soon',     cls: 'tone-ink',    tiers: ['ORDER_NOW', 'ORDER_SOON'] },
+  { tone: 'info',    label: 'Needs info',         cls: 'tone-ring',   tiers: ['AT_RISK', 'UNCLASSIFIED'] },
+  { tone: 'healthy', label: 'Healthy',            cls: 'tone-mid',    tiers: ['OK'] },
+  { tone: 'over',    label: 'Overstocked',        cls: 'tone-faint',  tiers: ['OVERSTOCK'] },
+];
 
 export function fmtNum(n: number | null | undefined, digits = 1): string {
   if (n === null || n === undefined) return '—';

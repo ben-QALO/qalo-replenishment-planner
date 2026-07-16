@@ -1,23 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, fmtInt, type SkusResponse } from './api.ts';
-import { Drawer, ToastHost } from './components/ui.tsx';
+import { Drawer, ToastHost, ConfirmHost } from './components/ui.tsx';
+import { MiniRing } from './components/charts.tsx';
 import { Dashboard } from './pages/Dashboard.tsx';
 import { AllSkus } from './pages/AllSkus.tsx';
 import { SkuDetail } from './pages/SkuDetail.tsx';
 import { Imports } from './pages/Imports.tsx';
 import { WarehousePos } from './pages/WarehousePos.tsx';
 import { Templates } from './pages/Templates.tsx';
-
-const SunIcon = () => (
-  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-    <circle cx="12" cy="12" r="4.5" /><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19" />
-  </svg>
-);
-const MoonIcon = () => (
-  <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
-    <path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z" />
-  </svg>
-);
 
 type Route = { page: string; sku?: string; params: URLSearchParams };
 
@@ -44,13 +34,6 @@ export function App() {
   const [meta, setMeta] = useState<DashMeta | null>(null);
   const [templates, setTemplates] = useState<{ id: number; name: string }[]>([]);
   const [drawerSku, setDrawerSku] = useState<string | null>(null);
-  const [theme, setTheme] = useState<'light' | 'dark'>(
-    () => (typeof document !== 'undefined' && document.documentElement.getAttribute('data-theme') === 'dark') ? 'dark' : 'light');
-
-  useEffect(() => {
-    document.documentElement.setAttribute('data-theme', theme);
-    try { localStorage.setItem('qalo-theme', theme); } catch { /* ignore */ }
-  }, [theme]);
 
   const refresh = useCallback(() => setVersion(v => v + 1), []);
 
@@ -92,7 +75,7 @@ export function App() {
     { key: 'dashboard', label: 'Action Center', hash: '#/', count: hotCount > 0 ? hotCount : undefined, hot: true },
     { key: 'skus', label: 'All SKUs', hash: '#/skus', count: skus?.results.length || undefined },
     { key: 'imports', label: 'Imports', hash: '#/imports' },
-    { key: 'warehouse', label: 'Warehouse & POs', hash: '#/warehouse' },
+    { key: 'warehouse', label: 'Transfers & POs', hash: '#/warehouse' },
     { key: 'templates', label: 'Templates & Settings', hash: '#/templates' },
   ];
 
@@ -102,11 +85,19 @@ export function App() {
     return 'ok';
   }, [meta]);
 
+  // Data freshness for the top-right ring: full & teal on import day, draining as it ages.
+  const freshness = useMemo(() => {
+    if (!meta?.snapshot) return null;
+    const pct = Math.max(0, 1 - meta.snapshot.age_days / 14);
+    const color = staleness === 'ok' ? 'var(--c-health)' : staleness === 'stale' ? 'var(--grad-lime)' : 'var(--danger)';
+    return { pct, color, label: Math.round(pct * 100) };
+  }, [meta, staleness]);
+
   return (
     <div className="shell">
       <aside className="sidebar">
         <div className="wordmark">
-          <img className="logo" src={theme === 'dark' ? '/qalo-white.png' : '/qalo-black.png'} alt="QALO" />
+          <img className="logo" src="/qalo-white.png" alt="QALO" />
           <div className="sub">Replenishment Planner</div>
         </div>
         <nav className="nav">
@@ -117,7 +108,7 @@ export function App() {
             </a>
           ))}
         </nav>
-        <div className="foot">local · 127.0.0.1:8787<br />data stays on this Mac</div>
+        <div className="foot">QALO internal tool<br />shared team instance</div>
       </aside>
 
       <main className="main">
@@ -131,12 +122,13 @@ export function App() {
           <span>Template: <b>{meta?.active_template?.name ?? '—'}</b></span>
           <span>Warehouse: <b>{meta?.warehouse.last_updated ? meta.warehouse.last_updated.slice(0, 10) : 'no data'}</b></span>
           <span className="spacer" />
+          {freshness && (
+            <MiniRing pct={freshness.pct} color={freshness.color}
+              title={`Data freshness — snapshot is ${meta!.snapshot!.age_days === 0 ? 'from today' : `${meta!.snapshot!.age_days} days old`}`}>
+              {freshness.label}%
+            </MiniRing>
+          )}
           <a href="/api/exports/status.csv">Export full status ↓</a>
-          <button className="theme-toggle" onClick={() => setTheme(t => (t === 'dark' ? 'light' : 'dark'))}
-            title={theme === 'dark' ? 'Switch to light' : 'Switch to dark'} aria-label="Toggle theme">
-            <span className={theme === 'light' ? 'on' : ''}><SunIcon /></span>
-            <span className={theme === 'dark' ? 'on' : ''}><MoonIcon /></span>
-          </button>
         </div>
 
         {meta?.snapshot && meta.snapshot.age_days > 7 && (
@@ -173,6 +165,7 @@ export function App() {
         )}
       </main>
       <ToastHost />
+      <ConfirmHost />
     </div>
   );
 }

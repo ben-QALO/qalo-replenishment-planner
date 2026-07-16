@@ -1,0 +1,48 @@
+/* ── QALO brand typefaces ───────────────────────────────────────────────
+   Termina  → display (headings, big numerals) — wide geometric grotesk
+   Moderat  → body / UI text
+   Files live in web/public/fonts and are served from /fonts/*.woff2         */
+
+@font-face {
+  font-family: 'Termina';
+  src: url('/fonts/Termina-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Termina';
+  src: url('/fonts/Termina-Medium.woff2') format('woff2');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Termina';
+  src: url('/fonts/Termina-Bold.woff2') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Moderat';
+  src: url('/fonts/Moderat-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Moderat';
+  src: url('/fonts/Moderat-Medium.woff2') format('woff2');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Moderat';
+  src: url('/fonts/Moderat-Bold.woff2') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}

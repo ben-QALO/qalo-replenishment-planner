@@ -1,0 +1,30 @@
+# Fly.io config for the QALO Replenishment Planner.
+# `fly launch` will set `app` and `primary_region` for you (or edit them here).
+app = "qalo-replen"
+primary_region = "iad"   # pick the region closest to your team
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  HOST = "0.0.0.0"
+  PORT = "8787"
+  DATA_DIR = "/data"
+
+# Persistent disk that holds the SQLite database + daily backups.
+[mounts]
+  source = "replen_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 8787
+  force_https = true
+  # Sleep the machine when idle and wake it on the next request — keeps monthly cost near zero.
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+# SQLite means exactly ONE machine may touch the volume. Do not scale this above 1.
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

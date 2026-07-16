@@ -121,3 +121,36 @@ test('zero sales across all windows → velocity 0 (true zero-seller, not unknow
   assert.equal(v.velocity, 0);
   assert.equal(v.source, 'report');
 });
+
+// ── Business Report demand (FBM + FBA) ────────────────────────────────────────
+// The truest signal: it must beat the FBA-only windows, cover FBM-tested / OOS-on-FBA
+// items, and never zero out a real seller when the report lacks the row.
+
+test('business report: overrides the FBA-only windows', () => {
+  // FBA shipped implies ~1/day; the Business Report says 300 over 30 days = 10/day (FBM too).
+  const l = line({ sku: 'X', available: 100, units_shipped_t7: 7, units_shipped_t30: 30, units_shipped_t60: 60, units_shipped_t90: 90 });
+  const v = resolveVelocity(l, settings(), WEIGHTS, 1, true, undefined, { units: 300, days: 30 });
+  assert.equal(v.source, 'business_report');
+  assert.equal(v.velocity, 10);
+});
+
+test('business report: a brand-new FBM item with no FBA line still gets a rate', () => {
+  const v = resolveVelocity(null, settings(), WEIGHTS, 1, true, undefined, { units: 60, days: 30 });
+  assert.equal(v.source, 'business_report');
+  assert.equal(v.velocity, 2);
+});
+
+test('business report: an empty row falls back to FBA windows (never zeroes a seller)', () => {
+  const l = line({ sku: 'X', available: 100, units_shipped_t7: 7, units_shipped_t30: 30, units_shipped_t60: 60, units_shipped_t90: 90 });
+  const v = resolveVelocity(l, settings(), WEIGHTS, 1, true, undefined, { units: 0, days: 30 });
+  assert.equal(v.source, 'report');
+  assert.ok(v.velocity !== null && v.velocity > 0);
+});
+
+test('business report: manual override still wins; growth multiplier applies', () => {
+  const manual = resolveVelocity(null, settings({ velocity_override: 5 }), WEIGHTS, 1, true, undefined, { units: 300, days: 30 });
+  assert.equal(manual.source, 'manual');
+  assert.equal(manual.velocity, 5);
+  const grown = resolveVelocity(null, settings({ growth_multiplier: 2 }), WEIGHTS, 1, true, undefined, { units: 300, days: 30 });
+  assert.equal(grown.velocity, 20);
+});

@@ -2,9 +2,9 @@ import React, { useEffect, useState } from 'react';
 import { STATUS_META } from '../api.ts';
 
 export function StatusBadge({ status }: { status: string }) {
-  const meta = STATUS_META[status] ?? { label: status, c: 'var(--neutral)', bg: 'var(--neutral-bg)' };
+  const meta = STATUS_META[status] ?? { label: status, c: 'var(--neutral)', bg: 'var(--neutral-bg)', help: '' };
   return (
-    <span className="badge" style={{ ['--b-c' as any]: meta.c, ['--b-bg' as any]: meta.bg }}>
+    <span className="badge" title={(meta as any).help ?? ''} style={{ ['--b-c' as any]: meta.c, ['--b-bg' as any]: meta.bg }}>
       {meta.label}
     </span>
   );
@@ -65,6 +65,59 @@ export function ToastHost() {
   }, []);
   if (!msg) return null;
   return <div className="toast">{msg}</div>;
+}
+
+/* ── Confirm dialog — an in-app modal, not the browser's cheap-looking confirm() ──── */
+
+export interface ConfirmOpts {
+  title?: string;
+  body?: string;
+  confirmLabel?: string;
+  cancelLabel?: string;
+  danger?: boolean;   // red confirm button for destructive actions
+}
+
+let confirmFn: ((opts: ConfirmOpts) => Promise<boolean>) | null = null;
+
+/** Promise-based confirm. `await confirmDialog({title, body})` → true/false. */
+export function confirmDialog(opts: ConfirmOpts | string): Promise<boolean> {
+  const o = typeof opts === 'string' ? { body: opts } : opts;
+  if (confirmFn) return confirmFn(o);
+  return Promise.resolve(window.confirm(o.body ?? o.title ?? ''));
+}
+
+export function ConfirmHost() {
+  const [state, setState] = useState<{ opts: ConfirmOpts; resolve: (v: boolean) => void } | null>(null);
+  useEffect(() => {
+    confirmFn = (opts) => new Promise<boolean>(resolve => setState({ opts, resolve }));
+    return () => { confirmFn = null; };
+  }, []);
+  useEffect(() => {
+    if (!state) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { state.resolve(false); setState(null); }
+      if (e.key === 'Enter') { state.resolve(true); setState(null); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [state]);
+  if (!state) return null;
+  const { opts, resolve } = state;
+  const done = (v: boolean) => { resolve(v); setState(null); };
+  return (
+    <div className="modal-veil" onClick={() => done(false)}>
+      <div className="modal" role="dialog" aria-modal="true" onClick={e => e.stopPropagation()}>
+        {opts.title && <div className="modal-title">{opts.title}</div>}
+        {opts.body && <div className="modal-body">{opts.body}</div>}
+        <div className="modal-actions">
+          <button className="btn" onClick={() => done(false)}>{opts.cancelLabel ?? 'Cancel'}</button>
+          <button className={`btn primary${opts.danger ? ' danger' : ''}`} autoFocus onClick={() => done(true)}>
+            {opts.confirmLabel ?? 'Confirm'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 export function downloadCsv(filename: string, csv: string) {

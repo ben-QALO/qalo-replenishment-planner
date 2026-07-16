@@ -17,22 +17,53 @@ function one(out: ReturnType<typeof computeRecommendations>, sku: string) {
 test('integration: ORDER_NOW on both lanes with hand-computed quantities', () => {
   const out = computeRecommendations(input({
     lines: [line({ sku: 'RING-1', available: 50, inbound_shipped: 10, ...steady(2) })],
-    skuSettings: { 'RING-1': settings({ case_pack: 6, moq: 100, order_multiple: 25 }) },
+    skuSettings: { 'RING-1': settings({ case_pack: 6, moq: 150, order_multiple: 25 }) },
     warehouse: { 'RING-1': 100 },
   }), TODAY);
   const r = one(out, 'RING-1');
   assert.equal(r.velocity, 2);
   assert.equal(r.fba_position, 60);
   assert.equal(r.fba_days_cover, 30);
-  assert.equal(r.recommended_ship_qty, 18);      // (2×38 − 60) → cases of 6
+  // Transfer: 2×38 − (50 sellable + 10 coming − 2×10 leg-sales) = 36 → cases of 6.
+  assert.equal(r.recommended_ship_qty, 36);
   assert.equal(r.total_pipeline, 160);
-  assert.equal(r.recommended_po_qty, 100);       // 68 → MOQ 100
+  // PO: warehouse target 60, projected 100 − 2×70 lead-outflow = −40 → raw 100 → MOQ 150.
+  assert.equal(r.recommended_po_qty, 150);
   assert.equal(r.status, 'ORDER_NOW');
   assert.ok(r.flags.includes('MOQ_PADDED'));
-  assert.ok(r.why.includes('38-day reorder point'));
+  assert.ok(r.why.includes('/day'), `plain-language why: ${r.why}`);
   assert.equal(out.summary.order_now, 1);
-  assert.equal(out.summary.ship_units_total, 18);
-  assert.equal(out.summary.po_units_total, 100);
+  assert.equal(out.summary.ship_units_total, 36);
+  assert.equal(out.summary.po_units_total, 150);
+});
+
+test('integration: 20/day SKU with real QALO lead times — projection-based recommendations', () => {
+  // Real Ocean defaults: 45+14+1 = 60d China lead, 35d FBA leg, 14d safety, 120d FBA
+  // target, 30d warehouse buffer.
+  const QALO = {
+    production_days: 45, transit_days: 14, customs_receiving_days: 1,
+    fba_ship_checkin_days: 35, safety_days: 14,
+    fba_target_cover_days: 120, warehouse_buffer_days: 30, target_cover_days: 225,
+    review_period_fba_days: 14, review_period_po_days: 30,
+  };
+  const out = computeRecommendations(input({
+    globalTemplate: QALO,
+    lines: [line({ sku: 'Q-1', available: 2000, ...steady(20) })],
+    skuSettings: { 'Q-1': settings() },
+    warehouse: { 'Q-1': 2000 },
+    openPoLines: [{ sku: 'Q-1', qty_outstanding: 600, expected_arrival: '2026-08-15' }],
+  }), TODAY);
+  const r = one(out, 'Q-1');
+  // Transfer: refill FBA to 2400 as it lands. Projected on arrival = 2000 − 20×35 = 1300 →
+  // required 1100. Warehouse spare above the 600-unit reserve = 1400 → ships the full 1100.
+  assert.equal(r.transfer_required, 1100);
+  assert.equal(r.recommended_ship_qty, 1100);
+  assert.equal(r.transfer_shortage, 0);
+  // PO: system target = 20 × (120 goal + 35 FBA leg + 30 reserve + 60 lead + 15 half-cycle)
+  // = 20 × 260 = 5,200. Total pipeline = 2000 FBA + 2000 warehouse + 600 on order = 4,600.
+  // FBA (2000) is below its 2,400 goal → deficit → order the gap 5,200 − 4,600 = 600 today.
+  assert.equal(r.recommended_po_qty, 600);
+  assert.equal(r.place_by_date, TODAY);
 });
 
 test('integration: STOCKOUT beats everything; suppressed velocity flagged', () => {
@@ -44,7 +75,7 @@ test('integration: STOCKOUT beats everything; suppressed velocity flagged', () =
   const r = one(out, 'OOS-1');
   assert.equal(r.status, 'STOCKOUT');
   assert.ok(r.flags.includes('STOCKOUT_CORRECTED'));
-  assert.ok(r.why.includes('ship now'));
+  assert.ok(r.why.includes('warehouse'));
   assert.ok(r.recommended_ship_qty > 0, 'stockout with warehouse stock must recommend a shipment');
 });
 
@@ -56,24 +87,27 @@ test('integration: CRITICAL when stockout lands before any replenishment can, wi
   }), TODAY);
   const r = one(out, 'CRIT-1');
   assert.equal(r.status, 'CRITICAL');
-  assert.equal(r.stockout_gap_days, 50);          // 80 − 30
+  // Do-nothing runway drains 58 sellable at 2/day → out in 29 days; earliest ocean arrival 80.
+  assert.equal(r.stockout_gap_days, 51);          // 80 − 29
   assert.equal(r.earliest_fba_arrival, '2026-09-27');
-  // air: 51 days out vs stockout at 30 days → air gap 21 → saves 29
+  // air: 51 days out vs stockout at 29 days → air gap 22 → saves 29
   assert.equal(r.air_saves_days, 29);
   assert.ok(r.why.includes('Air freight'));
 });
 
 test('integration: ORDER_SOON inside the pre-warning window', () => {
-  // 2/day, fba position 80 → 40 days: above rop 38, inside 38+7 → ORDER_SOON.
-  // Give plenty of pipeline so the PO lane stays quiet: warehouse 400 → pipeline 480 → 240 days > 121.
+  // 2/day, 56 sellable = 28 days cover. Urgent floor = leg 10 + safety 14 = 24; order-soon
+  // window 24..31 → 28 lands in ORDER_SOON. Warehouse 200 → pipeline 256 = 128 days: above the
+  // PO-urgent line (84) and below overstock (1.5×123) so neither lane escalates or overstocks.
   const out = computeRecommendations(input({
-    lines: [line({ sku: 'SOON-1', available: 80, ...steady(2) })],
+    lines: [line({ sku: 'SOON-1', available: 56, ...steady(2) })],
     skuSettings: { 'SOON-1': settings() },
-    warehouse: { 'SOON-1': 400 },
+    warehouse: { 'SOON-1': 200 },
   }), TODAY);
   const r = one(out, 'SOON-1');
   assert.equal(r.status, 'ORDER_SOON');
-  assert.equal(r.recommended_ship_qty, 0);
+  // Projection still lists a routine top-up: 2×38 − (56 − 2×10) = 40.
+  assert.equal(r.recommended_ship_qty, 40);
 });
 
 test('integration: OVERSTOCK on excessive cover and on dormant stock', () => {
@@ -200,9 +234,10 @@ test('growth multiplier changes recommendations end to end', () => {
   const g = one(grown, 'G-1');
   assert.equal(b.velocity, 2);
   assert.equal(g.velocity, 3);
-  assert.equal(b.status, 'OK');               // 50 days cover
-  assert.equal(g.status, 'ORDER_NOW');        // 33 days cover < 38
-  assert.equal(g.recommended_ship_qty, 14);   // 3×38 − 100 = 14
+  // Faster sales → bigger transfer to hold the same day-target.
+  // base: 2×38 − (100 − 2×10) = -4 → 0.   grown: 3×38 − (100 − 3×10) = 44.
+  assert.equal(b.recommended_ship_qty, 0);
+  assert.equal(g.recommended_ship_qty, 44);
 });
 
 test('results are sorted worst-tier first, then by risk score', () => {

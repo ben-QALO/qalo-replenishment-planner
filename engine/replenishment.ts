@@ -1,4 +1,4 @@
-import type { SnapshotLine, SkuSettings, TemplateParams, OpenPoLine } from './types.ts';
+import type { SnapshotLine, TemplateParams, OpenPoLine } from './types.ts';
 import { addDays } from './dates.ts';
 
 export const COVER_CAP = 9999;
@@ -66,107 +66,46 @@ export function poRopDays(t: TemplateParams): number {
   return chinaLeadDays(t) + t.review_period_po_days + t.safety_days;
 }
 
-// Order-up-to TARGET = the level you refill TO once triggered (never below the reorder
-// point, so a target set too low can't cause a stockout).
+// Order-up-to TARGET = the level each lane tops up TO every review cycle (never below
+// the reorder point, so a target set too low can't cause a stockout).
 export function fbaTargetDays(t: TemplateParams): number {
   return Math.max(t.fba_target_cover_days, fbaRopDays(t));
 }
 
+/**
+ * The total-system inventory target, derived from ONE conservation identity rather than
+ * assembled by intuition. To hold the FBA goal *on the shelf* while stock flows through
+ * the whole chain, the system must fund, all at once, every place a unit can be:
+ *
+ *   fbaTargetDays              — the shelf goal at Amazon
+ * + fba_ship_checkin_days      — units always in transit ON the warehouse→FBA leg
+ * + warehouse_buffer_days      — the reserve held at the warehouse
+ * + chinaLeadDays              — units always in transit ON the China→warehouse leg
+ * + review_period_po_days / 2  — working stock between POs
+ *
+ * Every term is "v-days of demand that must exist somewhere to keep the shelf full."
+ * Omitting any one term structurally starves FBA (the warehouse→FBA leg was the term
+ * that, when missing, made FBA settle ~1 month below goal). The invariant test suite
+ * (engine/__tests__/plan-invariants) is the guard: if this identity is ever wrong, a
+ * SKU's steady-state FBA peak drops below goal and the build fails — no silent drift.
+ */
+export function derivedPoTargetDays(t: TemplateParams): number {
+  return Math.round(
+    fbaTargetDays(t)
+      + t.fba_ship_checkin_days
+      + (t.warehouse_buffer_days ?? 0)
+      + chinaLeadDays(t)
+      + t.review_period_po_days / 2,
+  );
+}
+
 export function poTargetDays(t: TemplateParams): number {
-  return Math.max(t.target_cover_days, poRopDays(t));
+  return Math.max(t.target_cover_days, derivedPoTargetDays(t), poRopDays(t));
 }
 
-// The 1e-9 epsilon keeps float noise (e.g. 14.000000000000014) from inflating a
-// quantity by a whole case.
-function roundUpTo(qty: number, multiple: number | null | undefined): number {
-  const m = multiple && multiple > 1 ? multiple : 1;
-  return Math.ceil(qty / m - 1e-9) * m;
-}
-
-function roundDownTo(qty: number, multiple: number | null | undefined): number {
-  const m = multiple && multiple > 1 ? multiple : 1;
-  return Math.floor(qty / m + 1e-9) * m;
-}
-
-export interface FbaLaneResult {
-  triggered: boolean;
-  recommended_ship_qty: number;
-  flags: string[];
-}
-
-/** Lane 1 — warehouse → FBA. Order-up-to velocity × fba_rop_days, capped by warehouse stock. */
-export function fbaLane(
-  velocity: number | null,
-  fbaDaysCover: number | null,
-  fbaPosition: number,
-  warehouseOnHand: number,
-  t: TemplateParams,
-  settings: SkuSettings | undefined,
-): FbaLaneResult {
-  const flags: string[] = [];
-  if (velocity === null || velocity <= 0 || fbaDaysCover === null) {
-    return { triggered: false, recommended_ship_qty: 0, flags };
-  }
-  const rop = fbaRopDays(t);
-  if (fbaDaysCover >= rop) return { triggered: false, recommended_ship_qty: 0, flags };
-
-  // Triggered below the reorder point → refill UP TO the FBA target (e.g. 120 days),
-  // not merely back to the floor. This is what builds FBA toward the target level.
-  const target = fbaTargetDays(t);
-  const raw = Math.max(0, velocity * target - fbaPosition);
-  let qty = roundUpTo(raw, settings?.case_pack);
-  if (qty > warehouseOnHand) {
-    qty = roundDownTo(warehouseOnHand, settings?.case_pack);
-    flags.push('WAREHOUSE_SHORT');
-  }
-  return { triggered: true, recommended_ship_qty: qty, flags };
-}
-
-export interface PoLaneResult {
-  triggered: boolean;
-  recommended_po_qty: number;
-  need_by_arrival: string | null;
-  place_by_date: string | null;
-  flags: string[];
-}
-
-/** Lane 2 — China PO. Order-up-to velocity × po_rop_days against the whole pipeline. */
-export function poLane(
-  velocity: number | null,
-  pipelineDaysCover: number | null,
-  totalPipeline: number,
-  t: TemplateParams,
-  settings: SkuSettings | undefined,
-  today: string,
-): PoLaneResult {
-  const flags: string[] = [];
-  if (velocity === null || velocity <= 0 || pipelineDaysCover === null) {
-    return { triggered: false, recommended_po_qty: 0, need_by_arrival: null, place_by_date: null, flags };
-  }
-  const rop = poRopDays(t);
-  const lead = chinaLeadDays(t);
-  const need_by_arrival = addDays(today, Math.max(0, pipelineDaysCover - t.safety_days));
-  const place_by_date = addDays(need_by_arrival, -lead);
-
-  if (pipelineDaysCover >= rop) {
-    return { triggered: false, recommended_po_qty: 0, need_by_arrival, place_by_date, flags };
-  }
-
-  // Triggered below the PO reorder point → refill the WHOLE pipeline up to the total target.
-  const target = poTargetDays(t);
-  let qty = Math.max(0, velocity * target - totalPipeline);
-  const moq = settings?.moq ?? 0;
-  if (qty > 0 && moq > 0 && qty < moq) {
-    qty = moq;
-    flags.push('MOQ_PADDED');
-  }
-  const preRound = qty;
-  qty = roundUpTo(qty, settings?.order_multiple ?? settings?.case_pack);
-  // Rounding that adds more than 30 days of cover needs a human eye.
-  if (qty - preRound > velocity * 30) flags.push('ROUNDING_HEAVY');
-
-  return { triggered: true, recommended_po_qty: Math.round(qty), need_by_arrival, place_by_date, flags };
-}
+// Note: the warehouse→FBA and China→warehouse *recommendation* math lives in
+// engine/projection.ts (the day-by-day model). This file keeps the position/cover
+// primitives, the reorder-point/target reference numbers, and the arrival estimate.
 
 export interface ArrivalEstimate {
   earliest_fba_arrival: string | null;

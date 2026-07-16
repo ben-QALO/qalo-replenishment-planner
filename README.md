@@ -34,18 +34,32 @@ the Amazon FBA Inventory export and your NetSuite warehouse report (Qalo Amazon 
 Report). Then work the **Action Center** top-down:
 
 1. **Needs your attention** (the band at the top) — clear it first. It counts, and links
-   straight to, every open task: transfers to reconcile, POs to update, new products to
-   classify, SKUs missing a sales rate. When it's empty, the numbers below are trustworthy.
-2. **Ship to FBA** queue → adjust quantities → **Submit transfer request.** This drops the
-   units from usable warehouse stock immediately and downloads the request file to send to
-   the inventory team. The units now show as *in transit to FBA* so they're never re-shipped.
+   straight to, every open task: requests to review, requests to send, transfers to
+   reconcile, POs to update, new products to classify, SKUs missing a sales rate. When it's
+   empty, the numbers below are trustworthy.
+2. **Ship to FBA** queue → adjust quantities → **Create request for review.** This starts a
+   transfer request; nothing leaves the warehouse yet.
 3. **Next China PO** queue (sorted by place-by date — top rows are burning) → **Export PO
    proposal** → send to the manufacturer → create the draft PO so the pipeline sees it.
 
-**Next session — reconcile.** The transfers you submitted last time sit under
-**Warehouse → Transfers to FBA** (and in the attention band). Once you've confirmed a
-shipment was created and is inbound in Amazon, hit **Reconcile** to close it. Nothing moves
-status on its own — you own every step; the tool only counts and flags.
+### The transfer request flow (Warehouse → Transfers to FBA)
+
+A request moves through three stages, each a hand-off between two teams:
+
+1. **Proposed — inventory team to review.** The Amazon team's request lands here. The
+   inventory team checks and adjusts each quantity (the original ask is kept for the record),
+   can leave a note, then **Mark reviewed.**
+2. **Reviewed — Amazon team to finalize & send.** The Amazon team applies any last changes
+   and **Send to warehouse.** *This* is the moment units leave usable warehouse stock, start
+   counting as *in transit to FBA*, and the warehouse file downloads. (Or **Send back** to
+   return it to the inventory team.)
+3. **In transit to FBA — awaiting reconciliation.** Once you confirm the shipment was
+   created and is inbound in Amazon, hit **Reconcile** to close it.
+
+Units are only deducted from the warehouse when a request is **sent** — reviewing and
+adjusting never churns your numbers. Every stage has per-row and bulk actions, and Cancel
+works at any point (sent units return to the warehouse). Nothing moves status on its own —
+you own every hand-off; the tool only counts and flags.
 
 Warehouse stock and China POs are the two things Amazon can't see, so the tool relies on
 your NetSuite import and your PO status marks to keep the pipeline honest.
@@ -71,30 +85,52 @@ never counted twice. Each unit is counted exactly once at every stage.
   sales rate (and, once weekly snapshots accumulate, divides sales by in-stock days
   only). Corrected SKUs carry a `stockout corrected` tag and say so in their audit
   sentence. Toggle under Templates & Settings → Velocity model.
-- **Reorder point vs. target — the key distinction.** Each leg has two numbers:
-  the **reorder point** (the floor that *triggers* action = lead + one cycle + safety)
-  and the **target** (the level it *refills to*). They are different: you top up *to the
-  target*, not merely back to the floor.
-- **Ship to FBA** fires when FBA days-of-cover drops below the reorder point
-  (warehouse→FBA + FBA cadence + safety). It then ships enough to bring FBA up to the
-  **FBA target** (default **120 days = 4 months**, editable per template/SKU), rounded to
-  case packs and capped by usable warehouse stock.
-- **China PO** fires when *total pipeline* cover (FBA + warehouse + in-transit + open POs)
-  drops below the PO reorder point (China lead + PO cadence + safety). It orders enough to
-  bring the whole pipeline up to the **total target** (default **150 days = 5 months**),
-  applies MOQ / order multiples, and gives a **place-by date** — miss it and the SKU goes
-  CRITICAL. The total target must exceed the FBA target so the warehouse holds reserve.
-- **CRITICAL** means: even if you act today, stock runs out before help can arrive.
-  The tool shows how many stockout days air freight would save.
-- Every recommendation carries a one-sentence audit trail ("At 21/day, 746 at/heading to
-  Amazon = 35 days of cover, below the 63-day reorder point → ship 1,776 to reach your
-  120-day FBA target"). If a number looks wrong, open the SKU drawer and check the math.
+- **The decision model is a day-by-day projection.** Instead of comparing today's totals
+  against abstract thresholds, the tool plays each product's sales and your real lead times
+  forward and asks the only question that matters: *will Amazon or the warehouse drop too
+  low before the next shipment or order can arrive?* Every recommended number is the amount
+  that prevents the first shortfall — and it traces to a date you can see on the runway
+  chart. This was validated by simulating years of the QALO scenario across cold-start,
+  at-target, and overstocked starts: zero stockouts, the warehouse reserve never breached.
+- **Ship to FBA** brings Amazon back up to your **FBA goal as the shipment lands** (default
+  **90 days**): it counts what's already on the way and subtracts the ~5 weeks of sales
+  during the transfer, so a shipment that takes 5 weeks still arrives on-goal. The
+  **warehouse reserve** (default **30 days**) throttles *routine* top-ups only — it is a
+  **soft floor**: if Amazon would otherwise run dry (cover below the ship leg + one cycle),
+  the tool ships the reserve too. Being in stock at Amazon always outranks holding the
+  buffer. If even the whole warehouse can't cover the need, the tool shows all three
+  numbers — **required / can give / short by** — and never hides the gap. It also **won't
+  ship a product already at/above its goal**, or **into an overstocked pipeline**.
+- **Case packs + the ¾ rule.** Shipments round to whole case packs, and a partial case is
+  only shipped if the need fills **at least ¾ of a case** — otherwise it's skipped this
+  cycle. This keeps slow sellers from getting a whole case for a handful of units of demand:
+  a product that can't use ¾ of a case doesn't get one. (Exception: if Amazon would run dry
+  before a shipment could land, it rounds up to guarantee cover.)
+- **China PO** is sized against the **whole system's need**, from one conservation identity:
+  the total inventory that must exist at once to keep the FBA goal on the shelf =
+  **FBA goal + warehouse→FBA transit leg + warehouse reserve + China lead + ½ PO cycle**
+  (every term is "units that must be *somewhere* to keep Amazon full"). It orders up to that,
+  minus everything you already have or have on order. One formula, two behaviors: **a deficit
+  is closed in a single order, placed today** (not dribbled out over months while Amazon runs
+  thin), and in steady state it settles to about **one month of sales per monthly PO**.
+- **The plan is validated, not trusted.** A forward simulation replays these exact rules for
+  every SKU, and an invariant check (`engine/__tests__/plan-invariants`) fails the build if
+  any archetype's Amazon stock can't *sustain* its goal in steady state or goes dark once the
+  chain could respond. This is what killed the old "patch a term, hope it's complete" cycle:
+  a missing term now shows up as a failing test, not as lost sales.
+- **CRITICAL** means the projection shows Amazon running out before *any* new stock can
+  physically arrive, even if you act today. The tool shows how many days air freight saves.
+- Every recommendation carries a plain-English sentence ("Selling about 21/day, Amazon has
+  about 5 weeks of stock. A shipment takes about 5 weeks to arrive, so act this cycle. Ship
+  1,300 now so it's back to your 90-day goal when it lands."). If a number looks off, open
+  the product to see the projection behind it.
 
 **Current defaults (Ocean – standard template):** China lead ≈ 60 days (45 production +
-14 freight + 1 customs), warehouse→FBA 35 days (~5 weeks), safety 14 days, FBA cadence 14
-days, PO cadence 30 days, FBA target 120 days, total target 150 days. Velocity weights
+14 freight + 1 customs), warehouse→FBA 35 days (~5 weeks), safety 14 days, transfers every
+14 days, POs every 30 days, FBA goal 90 days, warehouse reserve 30 days. Velocity weights
 40 / 40 / 10 / 10 across the 7 / 30 / 60 / 90-day windows. All editable under Templates &
-Settings, where a plain-English glossary defines every field.
+Settings, where a
+plain-English glossary defines every field.
 
 ## Lead-time templates
 

@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { api, fmtInt, fmtNum, type SkuResult } from '../api.ts';
 import { StatusBadge, Flags, toast } from '../components/ui.tsx';
-import { RunwayChart, HistoryChart, type PoArrival, type HistoryRow } from '../components/charts.tsx';
+import { PlanChart, HistoryChart, type PlanData, type HistoryRow } from '../components/charts.tsx';
 
 const CLASSES = ['unclassified', 'replenishable', 'watch', 'discontinued', 'ignore'];
 const PARAM_LABELS: Record<string, string> = {
@@ -10,7 +10,9 @@ const PARAM_LABELS: Record<string, string> = {
   customs_receiving_days: 'Customs + receiving (days)',
   fba_ship_checkin_days: 'FBA ship + check-in (days)',
   safety_days: 'Safety stock (days)',
-  target_cover_days: 'Target cover (days)',
+  fba_target_cover_days: 'FBA target (days)',
+  warehouse_buffer_days: 'Warehouse buffer (days)',
+  target_cover_days: 'Total target (days)',
   review_period_fba_days: 'FBA review cycle (days)',
   review_period_po_days: 'PO review cycle (days)',
 };
@@ -22,6 +24,7 @@ interface Detail {
   poLines: any[];
   planLines: any[];
   warehouse: { qty_on_hand: number; updated_at: string; updated_via: string } | null;
+  plan: PlanData | null;
 }
 
 export function SkuDetail({ sku, today, templates, refresh }: {
@@ -77,10 +80,6 @@ export function SkuDetail({ sku, today, templates, refresh }: {
   if (!detail) return <div className="empty">Loading…</div>;
   const r = detail.result;
 
-  const poArrivals: PoArrival[] = detail.poLines
-    .filter(p => (p.status === 'ordered' || p.status === 'in_transit') && p.expected_arrival && p.qty_ordered > p.qty_received)
-    .map(p => ({ date: p.expected_arrival, qty: p.qty_ordered - p.qty_received, label: p.po_number ?? `PO#${p.id}` }));
-
   const set = (k: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     setForm(f => ({ ...f, [k]: e.target.value })); setDirty(true);
   };
@@ -101,7 +100,7 @@ export function SkuDetail({ sku, today, templates, refresh }: {
           <div style={{ marginBottom: 10 }}><Flags flags={r.flags} max={8} /></div>
 
           <div className="grid-2">
-            <div className="card"><div className="card-head"><h3>Position</h3></div>
+            <div className="card"><div className="card-head"><h3>Stock on hand</h3></div>
               <div style={{ padding: '12px 16px' }}>
                 <dl className="kv">
                   <dt>Available at FBA</dt><dd>{fmtInt(r.fba_available)}</dd>
@@ -111,38 +110,47 @@ export function SkuDetail({ sku, today, templates, refresh }: {
                   <dt>Warehouse usable</dt><dd>{fmtInt(r.warehouse_on_hand)}</dd>
                   <dt>On open POs</dt><dd>{fmtInt(r.open_po_units)}</dd>
                   <dt>Total pipeline</dt><dd><b>{fmtInt(r.total_pipeline)}</b></dd>
-                  <dt>FBA days of cover</dt><dd>{fmtNum(r.fba_days_cover, 0)} (reorder at {r.fba_rop_days})</dd>
-                  <dt>Pipeline days of cover</dt><dd>{fmtNum(r.pipeline_days_cover, 0)} (reorder at {r.po_rop_days})</dd>
-                  <dt>Projected stockout</dt><dd style={{ color: r.projected_stockout_date ? 'var(--stockout)' : undefined }}>{r.projected_stockout_date ?? '—'}</dd>
-                  <dt>Earliest replenishment</dt><dd>{r.earliest_fba_arrival ?? '—'}</dd>
+                  <dt>Days of stock at Amazon</dt><dd>{fmtNum(r.fba_days_cover, 0)} days</dd>
+                  <dt>Days of stock across pipeline</dt><dd>{fmtNum(r.pipeline_days_cover, 0)} days</dd>
+                  <dt>Runs out (if you do nothing)</dt><dd style={{ color: r.projected_stockout_date ? 'var(--stockout)' : undefined }}>{r.projected_stockout_date ?? 'not within 6 months'}</dd>
+                  <dt>Soonest new stock can land</dt><dd>{r.earliest_fba_arrival ?? '—'}</dd>
                   <dt>Template</dt><dd>{r.template_label}</dd>
                   <dt>Amazon days of supply</dt><dd>{fmtNum(r.amazon_days_of_supply, 0)}</dd>
                 </dl>
               </div>
             </div>
 
-            <div className="card"><div className="card-head"><h3>Velocity</h3></div>
+            <div className="card"><div className="card-head"><h3>Sales &amp; plan</h3></div>
               <div style={{ padding: '12px 16px' }}>
                 <dl className="kv">
-                  <dt>Used</dt><dd><b>{fmtNum(r.velocity, 2)}</b> u/day ({r.velocity_source}, {r.velocity_confidence})</dd>
-                  <dt>7-day rate</dt><dd>{fmtNum(r.window_rates.r7, 2)}</dd>
-                  <dt>30-day rate</dt><dd>{fmtNum(r.window_rates.r30, 2)}</dd>
-                  <dt>60-day rate</dt><dd>{fmtNum(r.window_rates.r60, 2)}</dd>
-                  <dt>90-day rate</dt><dd>{fmtNum(r.window_rates.r90, 2)}</dd>
+                  <dt>Sales rate used</dt><dd><b>{fmtNum(r.velocity, 2)}</b> sold/day ({r.velocity_source}, {r.velocity_confidence})</dd>
+                  <dt>Sold/day, last 7 days</dt><dd>{fmtNum(r.window_rates.r7, 2)}</dd>
+                  <dt>Sold/day, last 30 days</dt><dd>{fmtNum(r.window_rates.r30, 2)}</dd>
+                  <dt>Sold/day, last 60 days</dt><dd>{fmtNum(r.window_rates.r60, 2)}</dd>
+                  <dt>Sold/day, last 90 days</dt><dd>{fmtNum(r.window_rates.r90, 2)}</dd>
                   <dt>Growth multiplier</dt><dd>×{r.growth_multiplier}</dd>
-                  <dt>Recommended ship</dt><dd style={{ color: 'var(--ship)' }}><b>{r.recommended_ship_qty || '—'}</b></dd>
-                  <dt>Recommended PO</dt><dd style={{ color: 'var(--po)' }}><b>{r.recommended_po_qty || '—'}</b></dd>
-                  <dt>Place PO by</dt><dd>{r.place_by_date ?? '—'}</dd>
-                  <dt>Need arrival by</dt><dd>{r.need_by_arrival ?? '—'}</dd>
+                  <dt>Ship to Amazon now</dt><dd style={{ color: 'var(--ship)' }}><b>{r.recommended_ship_qty || '—'}</b></dd>
+                  {r.transfer_shortage > 0 && (
+                    <><dt>— to hit goal you'd ship</dt><dd>{fmtInt(r.transfer_required)}</dd>
+                      <dt>— warehouse can spare</dt><dd>{fmtInt(r.transfer_safe)}</dd>
+                      <dt>— short by</dt><dd style={{ color: 'var(--stockout)' }}><b>{fmtInt(r.transfer_shortage)}</b></dd></>
+                  )}
+                  <dt>Order from China now</dt><dd style={{ color: 'var(--po)' }}><b>{r.recommended_po_qty || '—'}</b></dd>
+                  <dt>Place order by</dt><dd>{r.place_by_date ?? '—'}</dd>
+                  <dt>Lands at warehouse by</dt><dd>{r.need_by_arrival ?? '—'}</dd>
                 </dl>
               </div>
             </div>
           </div>
 
           <div className="card" style={{ marginTop: 16 }}>
-            <div className="card-head"><h3>Runway — projected Amazon stock if you do nothing new</h3></div>
+            <div className="card-head"><h3>The plan — stock over the next 6 months if you follow the recommendations</h3></div>
             <div className="chart-wrap">
-              <RunwayChart r={r} today={today} poArrivals={poArrivals} />
+              {detail.plan ? (
+                <PlanChart r={r} today={today} plan={detail.plan} />
+              ) : (
+                <div className="empty">No plan to project — this product needs a sales rate and a “replenish” classification first.</div>
+              )}
             </div>
           </div>
         </>
@@ -176,7 +184,7 @@ export function SkuDetail({ sku, today, templates, refresh }: {
             <input className="field num" style={{ width: '100%' }} type="number" value={form.moq} onChange={set('moq')} placeholder="—" /></label>
           <label style={{ fontSize: 12 }}>Order multiple<br />
             <input className="field num" style={{ width: '100%' }} type="number" value={form.order_multiple} onChange={set('order_multiple')} placeholder="—" /></label>
-          <label style={{ fontSize: 12 }}>Velocity override (u/day)<br />
+          <label style={{ fontSize: 12 }}>Sales rate override (sold/day)<br />
             <input className="field num" style={{ width: '100%' }} type="number" step="any" value={form.velocity_override} onChange={set('velocity_override')} placeholder="use report data" /></label>
           <label style={{ fontSize: 12 }}>Growth multiplier<br />
             <input className="field num" style={{ width: '100%' }} type="number" step="any" value={form.growth_multiplier} onChange={set('growth_multiplier')} placeholder="inherit global" /></label>

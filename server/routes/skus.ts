@@ -1,6 +1,9 @@
 import type { FastifyInstance } from 'fastify';
 import { getDb, bumpRevision, nowIso, today } from '../db/connection.ts';
-import { currentRecommendations } from '../assemble.ts';
+import { currentRecommendations, getSetting } from '../assemble.ts';
+import { projectPlan } from '../../engine/projection.ts';
+import { chinaLeadDays } from '../../engine/replenishment.ts';
+import { diffDays } from '../../engine/dates.ts';
 
 const PATCHABLE = [
   'classification', 'case_pack', 'moq', 'order_multiple',
@@ -70,7 +73,26 @@ export function skuRoutes(app: FastifyInstance): void {
 
     const warehouse = db.prepare('SELECT qty_on_hand, updated_at, updated_via FROM warehouse_inventory WHERE sku = ?').get(sku) ?? null;
 
-    return { result, settings: row ?? null, history, poLines, planLines, warehouse };
+    // "If you follow the plan" projection — computed with the same engine functions that
+    // produce the recommendations, from this SKU's current netted positions.
+    let plan = null;
+    if (result && result.velocity !== null && result.velocity > 0 && result.include_in_plans) {
+      const todayStr = today();
+      const arrivals = (poLines as any[])
+        .filter(p => (p.status === 'ordered' || p.status === 'in_transit') && p.qty_ordered > p.qty_received)
+        .map(p => ({
+          day: p.expected_arrival ? Math.max(0, diffDays(p.expected_arrival, todayStr)) : chinaLeadDays(result.template),
+          qty: p.qty_ordered - p.qty_received,
+        }));
+      plan = projectPlan(
+        result.velocity, result.fba_available, result.fba_coming, result.warehouse_on_hand,
+        arrivals, result.template,
+        row ? { classification: row.classification, case_pack: row.case_pack, moq: row.moq, order_multiple: row.order_multiple } : undefined,
+        180, Number(getSetting(db, 'overstock_factor') ?? '1.5'),
+      );
+    }
+
+    return { result, settings: row ?? null, history, poLines, planLines, warehouse, plan };
   });
 
   app.patch('/api/skus/:sku', (req, reply) => {

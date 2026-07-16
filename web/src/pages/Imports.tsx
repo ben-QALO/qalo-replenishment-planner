@@ -21,6 +21,8 @@ export function Imports({ refresh }: { refresh: () => void }) {
   const [triageSel, setTriageSel] = useState<Set<string>>(new Set());
   const [whOver, setWhOver] = useState(false);
   const [whResult, setWhResult] = useState<any | null>(null);
+  const [brOver, setBrOver] = useState(false);
+  const [brResult, setBrResult] = useState<any | null>(null);
   const [keep, setKeep] = useState<{ entries: any[]; count: number; kept_skus: number; ignored_skus: number } | null>(null);
   const [keepText, setKeepText] = useState('');
 
@@ -35,6 +37,16 @@ export function Imports({ refresh }: { refresh: () => void }) {
       toast(`Warehouse updated — ${res.matched} SKUs matched (${res.with_stock} with stock).`);
       refresh();
     } catch (err: any) { toast(`Warehouse import failed: ${err.message}`); } finally { setBusy(false); }
+  }
+
+  async function importBusinessReport(file: File) {
+    setBusy(true); setBrResult(null);
+    try {
+      const res = await api.upload<any>('/api/business-report/import', file);
+      setBrResult(res);
+      toast(`Business Report imported — ${res.matched} tracked ASINs matched (${res.with_sales} with sales).`);
+      refresh();
+    } catch (err: any) { toast(`Business Report import failed: ${err.message}`); } finally { setBusy(false); }
   }
 
   async function applyKeep() {
@@ -101,12 +113,20 @@ export function Imports({ refresh }: { refresh: () => void }) {
     <div className="page">
       <h1>Imports</h1>
       <div className="h-sub">
-        Each planning session, drop both files: the Amazon FBA Inventory export and your NetSuite warehouse report. Then submit your transfers from the Action Center.
+        Each planning session, drop your files: the Amazon FBA Inventory export, your NetSuite warehouse report, and the Amazon Business Report (for true FBM + FBA sales). Then submit your transfers from the Action Center.
       </div>
 
       <div className="grid-2">
         <div>
           <h2 style={{ marginTop: 4 }}>1 · Amazon FBA export</h2>
+          <div style={{ fontSize: 12, color: 'var(--muted)', margin: '-4px 0 10px' }}>
+            Get it from{' '}
+            <a href="https://sellercentral.amazon.com/reportcentral/MANAGE_INVENTORY_HEALTH/1"
+              target="_blank" rel="noopener noreferrer"
+              style={{ color: 'var(--accent)', borderBottom: '1px solid color-mix(in srgb, var(--accent) 40%, transparent)' }}>
+              Seller Central → Manage Inventory Health ↗
+            </a>
+          </div>
           <div
             className={`dropzone${over ? ' over' : ''}`}
             onDragOver={e => { e.preventDefault(); setOver(true); }}
@@ -151,6 +171,38 @@ export function Imports({ refresh }: { refresh: () => void }) {
             </div>
           )}
         </div>
+      </div>
+
+      <div style={{ marginTop: 18 }}>
+        <h2 style={{ marginTop: 4 }}>3 · Amazon Business Report <span style={{ fontSize: 13, fontWeight: 400, color: 'var(--muted)' }}>— true FBM + FBA sales</span></h2>
+        <div style={{ fontSize: 12, color: 'var(--muted)', margin: '-4px 0 10px', maxWidth: '86ch' }}>
+          The FBA export only shows FBA sales — a product that's out of stock on FBA, or a new item you're testing via merchant-fulfilled (FBM), won't show its real velocity. This report fixes that. Get the <b>Detail Page Sales &amp; Traffic by Child Item</b> report (last 30 days, by child ASIN) from{' '}
+          <a href="https://sellercentral.amazon.com/business-reports/ref=xx_sitemetric_dnav_xx#/report?id=102%3ADetailSalesTrafficByChildItem&chartCols=&columns=0%2F1%2F3%2F34%2F35%2F36%2F37"
+            target="_blank" rel="noopener noreferrer"
+            style={{ color: 'var(--accent)', borderBottom: '1px solid color-mix(in srgb, var(--accent) 40%, transparent)' }}>
+            Seller Central → Business Reports ↗
+          </a>
+        </div>
+        <div
+          className={`dropzone${brOver ? ' over' : ''}`}
+          onDragOver={e => { e.preventDefault(); setBrOver(true); }}
+          onDragLeave={() => setBrOver(false)}
+          onDrop={e => { e.preventDefault(); setBrOver(false); const f = e.dataTransfer.files[0]; if (f) importBusinessReport(f); }}
+          onClick={() => {
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = '.csv,.txt';
+            input.onchange = () => { if (input.files?.[0]) importBusinessReport(input.files[0]); };
+            input.click();
+          }}
+        >
+          {busy ? 'Working…' : <><b>Drop your Business Report</b> (Sales &amp; Traffic by Child ASIN .csv)</>}
+        </div>
+        {brResult && (
+          <div className="card" style={{ marginTop: 10, padding: '10px 14px', fontSize: 12.5 }}>
+            <b>{brResult.matched}</b> tracked ASINs matched ({brResult.with_sales} with sales) from the <span className="mono">{brResult.units_column}</span> column · {brResult.window_days}-day window. This now drives velocity for matched SKUs.
+          </div>
+        )}
       </div>
 
       <div className="card" style={{ margin: '18px 0', padding: 16 }}>

@@ -1,12 +1,14 @@
 // The only file that touches better-sqlite3 directly.
 import Database from 'better-sqlite3';
 import { existsSync, mkdirSync, readdirSync, unlinkSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { migrate } from './migrate.ts';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
-export const DATA_DIR = join(ROOT, 'data');
+// In the cloud the DB lives on a mounted persistent volume (DATA_DIR=/data); locally it
+// defaults to ./data next to the repo.
+export const DATA_DIR = process.env.DATA_DIR ? resolve(process.env.DATA_DIR) : join(ROOT, 'data');
 const DB_PATH = join(DATA_DIR, 'replen.db');
 const BACKUP_DIR = join(DATA_DIR, 'backups');
 const BACKUP_KEEP = 30;

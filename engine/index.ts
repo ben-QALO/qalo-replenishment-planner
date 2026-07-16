@@ -3,11 +3,14 @@ import type {
 } from './types.ts';
 import { resolveVelocity } from './velocity.ts';
 import {
-  computePositions, daysOfCover, fbaLane, poLane, earliestArrival,
+  computePositions, daysOfCover, earliestArrival,
   fbaRopDays, poRopDays, fbaTargetDays, poTargetDays, chinaLeadDays, COVER_CAP,
 } from './replenishment.ts';
+import { recommendTransfer, recommendPo, projectDoNothing } from './projection.ts';
 import { assignStatus } from './status.ts';
 import { addDays, diffDays } from './dates.ts';
+
+const PROJECTION_HORIZON_DAYS = 180;
 
 const TIER_ORDER: Record<string, number> = {
   STOCKOUT: 0, CRITICAL: 1, ORDER_NOW: 2, ORDER_SOON: 3, AT_RISK: 4,
@@ -63,6 +66,7 @@ export function computeRecommendations(input: EngineInput, today: string): Engin
     const vel = resolveVelocity(
       line, settings, input.weights, input.globalGrowthMultiplier,
       input.stockoutCorrection, input.stockoutDays?.[sku],
+      input.externalDemand?.[sku],
     );
     flags.push(...vel.flags);
     if (vel.velocity === null && (classification === 'replenishable' || classification === 'watch')) {
@@ -82,26 +86,50 @@ export function computeRecommendations(input: EngineInput, today: string): Engin
     const fbaCover = daysOfCover(positions.fba_position, vel.velocity);
     const pipelineCover = daysOfCover(positions.total_pipeline, vel.velocity);
 
-    const fba = planning
-      ? fbaLane(vel.velocity, fbaCover, positions.fba_position, positions.warehouse_on_hand, template, settings)
-      : { triggered: false, recommended_ship_qty: 0, flags: [] };
-    const po = planning
-      ? poLane(vel.velocity, pipelineCover, positions.total_pipeline, template, settings, today)
-      : { triggered: false, recommended_po_qty: 0, need_by_arrival: null, place_by_date: null, flags: [] };
-    flags.push(...fba.flags, ...po.flags);
+    // Open-PO arrival schedule (days from today) for the forward projection.
+    const poArrivals = (poBySku.get(sku) ?? [])
+      .filter(l => l.qty_outstanding > 0)
+      .map(l => ({ day: Math.max(0, l.expected_arrival ? diffDays(l.expected_arrival, today) : chinaLeadDays(template)), qty: l.qty_outstanding }));
 
-    // Projected stockout vs earliest possible replenishment.
+    // Overstocked = far more total cover than the plan calls for (same test the OVERSTOCK
+    // status uses). When overstocked, don't feed the glut forward: never order from China,
+    // and don't ship to FBA either — UNLESS FBA would otherwise run dry before a shipment
+    // could arrive (cover below the ship leg + safety), where capturing sales still wins.
+    const overstocked = vel.velocity !== null && vel.velocity > 0
+      && pipelineCover !== null && pipelineCover > input.overstockFactor * poTargetDays(template);
+    const urgentFloorDays = template.fba_ship_checkin_days + template.safety_days;
+    const suppressShip = overstocked && fbaCover !== null && fbaCover >= urgentFloorDays;
+
+    const transfer = planning && vel.velocity !== null && vel.velocity > 0 && !suppressShip
+      ? recommendTransfer(vel.velocity, positions.fba_available, positions.fba_coming, positions.warehouse_on_hand, template, settings)
+      : { required: 0, safe: 0, shortage: 0, recommended_ship_qty: 0 };
+    const po = planning && vel.velocity !== null && vel.velocity > 0 && !overstocked
+      ? recommendPo(vel.velocity, positions.total_pipeline, positions.fba_position, template, settings, today)
+      : { recommended_po_qty: 0, need_by_arrival: null, place_by_date: null, flags: [] };
+    if (transfer.shortage > 0) flags.push('WAREHOUSE_SHORT');
+    flags.push(...po.flags);
+
+    // Forward runway "if you do nothing new": first day FBA hits zero vs earliest arrival.
     let projectedStockout: string | null = null;
     let gapDays = 0;
     let airSaves: number | null = null;
+    let stockoutDay = -1;
     const arrival = earliestArrival(positions, poBySku.get(sku) ?? [], template, input.airTemplate, today);
-    if (planning && vel.velocity !== null && vel.velocity > 0 && fbaCover !== null && fbaCover < COVER_CAP) {
-      projectedStockout = addDays(today, fbaCover);
-      if (arrival.earliest_fba_arrival && diffDays(arrival.earliest_fba_arrival, projectedStockout) > 0) {
-        gapDays = diffDays(arrival.earliest_fba_arrival, projectedStockout);
-        if (arrival.air_earliest) {
-          const airGap = Math.max(0, diffDays(arrival.air_earliest, projectedStockout));
-          airSaves = gapDays - airGap;
+    const earliestArrivalDays = arrival.earliest_fba_arrival ? Math.max(0, diffDays(arrival.earliest_fba_arrival, today)) : COVER_CAP;
+    if (planning && vel.velocity !== null && vel.velocity > 0) {
+      const proj = projectDoNothing(
+        vel.velocity, positions.fba_available, positions.fba_coming, positions.warehouse_on_hand,
+        poArrivals, template, PROJECTION_HORIZON_DAYS,
+      );
+      stockoutDay = proj.stockoutDay;
+      if (stockoutDay >= 0) {
+        projectedStockout = addDays(today, stockoutDay);
+        if (earliestArrivalDays > stockoutDay) {
+          gapDays = earliestArrivalDays - stockoutDay;
+          if (arrival.air_earliest) {
+            const airGap = Math.max(0, diffDays(arrival.air_earliest, projectedStockout));
+            airSaves = gapDays - airGap;
+          }
         }
       }
     }
@@ -119,18 +147,18 @@ export function computeRecommendations(input: EngineInput, today: string): Engin
       total_pipeline: positions.total_pipeline,
       fba_days_cover: fbaCover,
       pipeline_days_cover: pipelineCover,
-      fba_rop_days: fbaRopDays(template),
-      po_rop_days: poRopDays(template),
-      fba_target_days: fbaTargetDays(template),
-      po_target_days: poTargetDays(template),
-      fbaTriggered: fba.triggered,
-      poTriggered: po.triggered,
-      recommended_ship_qty: fba.recommended_ship_qty,
+      recommended_ship_qty: transfer.recommended_ship_qty,
+      transfer_required: transfer.required,
+      transfer_safe: transfer.safe,
+      transfer_shortage: transfer.shortage,
       recommended_po_qty: po.recommended_po_qty,
-      stockout_gap_days: gapDays,
+      place_by_date: po.place_by_date,
+      stockout_day: stockoutDay,
+      earliest_arrival_days: earliestArrivalDays,
       air_saves_days: airSaves,
       orderSoonDays: input.orderSoonDays,
       overstockFactor: input.overstockFactor,
+      po_target_days: poTargetDays(template),
       template,
       flags,
       case_pack: settings?.case_pack,
@@ -178,7 +206,10 @@ export function computeRecommendations(input: EngineInput, today: string): Engin
       fba_target_days: fbaTargetDays(template),
       po_target_days: poTargetDays(template),
       china_lead_days: chinaLeadDays(template),
-      recommended_ship_qty: fba.recommended_ship_qty,
+      recommended_ship_qty: transfer.recommended_ship_qty,
+      transfer_required: transfer.required,
+      transfer_safe: transfer.safe,
+      transfer_shortage: transfer.shortage,
       recommended_po_qty: po.recommended_po_qty,
       need_by_arrival: po.need_by_arrival,
       place_by_date: po.place_by_date,

@@ -4,7 +4,8 @@ import { currentRecommendations, previewRecommendations, getSetting, setSetting 
 
 const PARAM_KEYS = [
   'production_days', 'transit_days', 'customs_receiving_days', 'fba_ship_checkin_days',
-  'safety_days', 'fba_target_cover_days', 'target_cover_days', 'review_period_fba_days', 'review_period_po_days',
+  'safety_days', 'fba_target_cover_days', 'warehouse_buffer_days', 'target_cover_days',
+  'review_period_fba_days', 'review_period_po_days',
 ];
 
 function validParams(p: any): boolean {
@@ -50,7 +51,7 @@ export function templateRoutes(app: FastifyInstance): void {
     if (b.name) { sets.push('name = ?'); vals.push(String(b.name)); }
     if ('notes' in b) { sets.push('notes = ?'); vals.push(b.notes || null); }
     if (b.params) {
-      if (!validParams(b.params)) return reply.code(400).send({ error: 'params must include all eight numeric fields' });
+      if (!validParams(b.params)) return reply.code(400).send({ error: 'params must include every numeric field' });
       sets.push('params = ?');
       vals.push(JSON.stringify(cleanParams(b.params)));
     }
