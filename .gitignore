@@ -8,3 +8,6 @@ runtime/
 node_modules/
 *.log
 .DS_Store
+
+# Built frontend (the Dockerfile rebuilds this on deploy — no need to store it)
+web/dist/
