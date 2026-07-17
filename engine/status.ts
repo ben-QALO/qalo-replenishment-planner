@@ -47,7 +47,10 @@ export function assignStatus(s: StatusInput): { status: StatusTier; why: string 
   if (s.classification === 'ignore' || s.classification === 'discontinued') {
     return { status: 'NOT_REPLENISHABLE', why: 'Not being replenished — no recommendations are generated.' };
   }
-  if (s.flags.includes('MISSING_FROM_IMPORT')) {
+  // Missing from the FBA export with NO independent sales signal → stale, suspend. But if the
+  // Business Report shows the ASIN is actively selling (FBM + FBA), the missing FBA line means
+  // its FBA stock is genuinely 0 — fall through to the real status (STOCKOUT etc.) and plan it.
+  if (s.flags.includes('MISSING_FROM_IMPORT') && !s.flags.includes('BUSINESS_REPORT')) {
     return {
       status: 'AT_RISK',
       why: 'This product wasn’t in the latest Amazon import, so its numbers are stale. Confirm it’s still active or mark it discontinued.',

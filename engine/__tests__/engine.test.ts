@@ -162,6 +162,22 @@ test('classified SKU missing from snapshot → AT_RISK (stale), never STOCKOUT, 
   assert.equal(r.include_in_plans, false);
 });
 
+test('missing from FBA export BUT selling per Business Report → planned (STOCKOUT, ships warehouse stock)', () => {
+  // FBM-tested / out-of-stock-on-FBA: no FBA line at all, but the Business Report shows the
+  // ASIN actively selling. The tool should treat FBA as empty and still plan a transfer in.
+  const out = computeRecommendations(input({
+    skuSettings: { 'FBM-1': settings() },
+    warehouse: { 'FBM-1': 300 },
+    externalDemand: { 'FBM-1': { units: 40, days: 30 } },
+  }), TODAY);
+  const r = one(out, 'FBM-1');
+  assert.equal(r.velocity_source, 'business_report');
+  assert.ok(r.flags.includes('MISSING_FROM_IMPORT'));
+  assert.equal(r.status, 'STOCKOUT', 'FBA is empty and it is selling → stockout, not "stale"');
+  assert.equal(r.include_in_plans, true);
+  assert.ok(r.recommended_ship_qty > 0, 'should ship warehouse stock to FBA');
+});
+
 test('replenishable SKU with no velocity data → AT_RISK with NO_VELOCITY', () => {
   const out = computeRecommendations(input({
     lines: [line({ sku: 'NOVEL-1', available: 12, units_shipped_t7: null, units_shipped_t30: null, units_shipped_t60: null, units_shipped_t90: null })],

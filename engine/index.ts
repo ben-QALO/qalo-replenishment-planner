@@ -81,7 +81,15 @@ export function computeRecommendations(input: EngineInput, today: string): Engin
     }
 
     const missingFromImport = flags.includes('MISSING_FROM_IMPORT');
-    const planning = (classification === 'replenishable' || classification === 'watch') && !missingFromImport;
+    // A SKU absent from the FBA export but with a Business-Report sales signal is the FBM-tested /
+    // out-of-stock-on-FBA case: the Business Report proves the ASIN is actively selling across
+    // channels (FBM + FBA), and absence from the FBA export means its FBA stock is genuinely 0. So
+    // plan it — ship warehouse stock in, order from China — instead of parking it as stale. A SKU
+    // that merely dropped out of the import with no such signal stays suspended (→ AT_RISK).
+    const sellingWhileMissing = missingFromImport && flags.includes('BUSINESS_REPORT')
+      && vel.velocity !== null && vel.velocity > 0;
+    const canPlan = !missingFromImport || sellingWhileMissing;
+    const planning = (classification === 'replenishable' || classification === 'watch') && canPlan;
 
     const fbaCover = daysOfCover(positions.fba_position, vel.velocity);
     const pipelineCover = daysOfCover(positions.total_pipeline, vel.velocity);
@@ -223,7 +231,7 @@ export function computeRecommendations(input: EngineInput, today: string): Engin
       daily_revenue: round2(dailyRevenue),
       template_label: label,
       template,
-      include_in_plans: classification === 'replenishable' && !missingFromImport,
+      include_in_plans: classification === 'replenishable' && canPlan,
       amazon_days_of_supply: line?.amazon_days_of_supply ?? null,
       amazon_min_inventory_level: line?.amazon_min_inventory_level ?? null,
     });

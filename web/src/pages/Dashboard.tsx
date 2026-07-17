@@ -78,7 +78,9 @@ export function Dashboard({ data, worklist, refresh, openSku, go }: {
     [results]);
   const riskRows = useMemo(() =>
     results.filter(r => r.status === 'AT_RISK' || r.status === 'UNCLASSIFIED'
-      || (r.status === 'STOCKOUT' && r.recommended_ship_qty === 0 && r.classification === 'replenishable'))
+      // A stockout only "needs info" when the tool has NOTHING actionable for it — no ship AND
+      // no PO. If a China PO is already recommended, it lives in the China PO tab, not here.
+      || (r.status === 'STOCKOUT' && r.recommended_ship_qty === 0 && r.recommended_po_qty === 0 && r.classification === 'replenishable'))
       .sort(byBestSeller),
     [results]);
 
