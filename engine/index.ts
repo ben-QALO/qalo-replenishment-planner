@@ -108,7 +108,11 @@ export function computeRecommendations(input: EngineInput, today: string): Engin
     const urgentFloorDays = template.fba_ship_checkin_days + template.safety_days;
     const suppressShip = overstocked && fbaCover !== null && fbaCover >= urgentFloorDays;
 
-    const transfer = planning && vel.velocity !== null && vel.velocity > 0 && !suppressShip
+    // FBM (merchant-fulfilled) SKUs are shipped to customers from the warehouse directly —
+    // they must NEVER get a warehouse→FBA transfer. Their demand still folds onto the FBA SKU
+    // of the same ASIN (see import/attribute-demand.ts), so the product is planned there.
+    const isFbm = settings?.fulfillment_channel === 'fbm';
+    const transfer = planning && !isFbm && vel.velocity !== null && vel.velocity > 0 && !suppressShip
       ? recommendTransfer(vel.velocity, positions.fba_available, positions.fba_coming, positions.warehouse_on_hand, template, settings)
       : { required: 0, safe: 0, shortage: 0, recommended_ship_qty: 0 };
     const po = planning && vel.velocity !== null && vel.velocity > 0 && !overstocked
@@ -186,6 +190,7 @@ export function computeRecommendations(input: EngineInput, today: string): Engin
       sku,
       title: line?.title ?? settings?.title ?? '',
       classification,
+      fulfillment_channel: isFbm ? 'fbm' : 'fba',
       velocity: vel.velocity === null ? null : round2(vel.velocity),
       base_velocity: vel.base_velocity === null ? null : round2(vel.base_velocity),
       velocity_source: vel.source,

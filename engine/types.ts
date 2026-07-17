@@ -44,6 +44,8 @@ export interface SnapshotLine {
 
 export interface SkuSettings {
   classification: Classification;
+  /** 'fba' (ship warehouse stock to Amazon) or 'fbm' (merchant-fulfilled — never ship to FBA). */
+  fulfillment_channel?: 'fba' | 'fbm';
   title?: string;
   case_pack?: number | null;
   moq?: number | null;
@@ -125,6 +127,7 @@ export interface SkuResult {
   sku: string;
   title: string;
   classification: Classification;
+  fulfillment_channel: 'fba' | 'fbm';
 
   velocity: number | null;        // units/day, after growth multiplier
   base_velocity: number | null;   // before growth multiplier

@@ -126,6 +126,7 @@ export function assembleEngineInput(db: Database.Database, overrideTemplateId?: 
     if (r.template_override_id) templateOverride = templateParamsById(db, r.template_override_id);
     skuSettings[r.sku] = {
       classification: r.classification,
+      fulfillment_channel: r.fulfillment_channel === 'fbm' ? 'fbm' : 'fba',
       title: r.title ?? undefined,
       case_pack: r.case_pack,
       moq: r.moq,
@@ -148,7 +149,10 @@ export function assembleEngineInput(db: Database.Database, overrideTemplateId?: 
   const externalDemand = attributeDemand(
     externalRows.map(r => ({ asin: String(r.asin), sku: r.sku, units: r.units })),
     windowDays,
-    skuRows.filter(r => r.asin).map(r => ({ sku: r.sku, asin: String(r.asin) })),
+    // Only FBA SKUs are demand-attribution targets. An FBM SKU's sales fold onto the FBA SKU
+    // of the same ASIN, so FBM demand is planned once (on the FBA SKU) and the FBM SKU itself
+    // is never sized for a transfer.
+    skuRows.filter(r => r.asin && r.fulfillment_channel !== 'fbm').map(r => ({ sku: r.sku, asin: String(r.asin) })),
   );
 
   // Warehouse on-hand comes straight from the latest NetSuite import — the source of truth.

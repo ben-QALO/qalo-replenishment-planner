@@ -178,6 +178,18 @@ test('missing from FBA export BUT selling per Business Report → planned (STOCK
   assert.ok(r.recommended_ship_qty > 0, 'should ship warehouse stock to FBA');
 });
 
+test('FBM SKU is never shipped to FBA (transfer forced to 0)', () => {
+  // Selling 3/day, 500 in the warehouse — an FBA SKU would ship a big transfer. FBM must not.
+  const out = computeRecommendations(input({
+    lines: [line({ sku: 'FBM-X', available: 0, ...steady(3) })],
+    skuSettings: { 'FBM-X': settings({ fulfillment_channel: 'fbm' }) },
+    warehouse: { 'FBM-X': 500 },
+  }), TODAY);
+  const r = one(out, 'FBM-X');
+  assert.equal(r.fulfillment_channel, 'fbm');
+  assert.equal(r.recommended_ship_qty, 0, 'FBM SKU must never get a warehouse→FBA transfer');
+});
+
 test('replenishable SKU with no velocity data → AT_RISK with NO_VELOCITY', () => {
   const out = computeRecommendations(input({
     lines: [line({ sku: 'NOVEL-1', available: 12, units_shipped_t7: null, units_shipped_t30: null, units_shipped_t60: null, units_shipped_t90: null })],

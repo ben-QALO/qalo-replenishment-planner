@@ -42,6 +42,8 @@ export function SkuDetail({ sku, today, templates, refresh }: {
     const s = d.settings ?? {};
     setForm({
       classification: s.classification ?? 'unclassified',
+      fulfillment_channel: s.fulfillment_channel ?? 'fba',
+      asin: s.asin ?? '',
       case_pack: s.case_pack ?? '',
       moq: s.moq ?? '',
       order_multiple: s.order_multiple ?? '',
@@ -60,6 +62,8 @@ export function SkuDetail({ sku, today, templates, refresh }: {
   async function save() {
     const patch: Record<string, unknown> = {
       classification: form.classification,
+      fulfillment_channel: form.fulfillment_channel || 'fba',
+      asin: form.asin.trim() || null,
       case_pack: form.case_pack === '' ? null : Number(form.case_pack),
       moq: form.moq === '' ? null : Number(form.moq),
       order_multiple: form.order_multiple === '' ? null : Number(form.order_multiple),
@@ -171,6 +175,13 @@ export function SkuDetail({ sku, today, templates, refresh }: {
           <label style={{ fontSize: 12 }}>Classification<br />
             <select className="field" style={{ width: '100%' }} value={form.classification} onChange={set('classification')}>
               {CLASSES.map(c => <option key={c} value={c}>{c}</option>)}
+            </select></label>
+          <label style={{ fontSize: 12 }}>ASIN<br />
+            <input className="field" style={{ width: '100%' }} value={form.asin} onChange={set('asin')} placeholder="B0..." /></label>
+          <label style={{ fontSize: 12 }}>Fulfillment channel<br />
+            <select className="field" style={{ width: '100%' }} value={form.fulfillment_channel} onChange={set('fulfillment_channel')}>
+              <option value="fba">FBA — ship warehouse stock to Amazon</option>
+              <option value="fbm">FBM — merchant-fulfilled, never ship to FBA</option>
             </select></label>
           <label style={{ fontSize: 12 }}>Lead-time template override<br />
             <select className="field" style={{ width: '100%' }} value={form.template_override_id} onChange={set('template_override_id')}>

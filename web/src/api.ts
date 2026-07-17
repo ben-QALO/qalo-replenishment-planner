@@ -1,7 +1,7 @@
 // Typed-ish fetch helpers for the local API.
 
 export interface SkuResult {
-  sku: string; title: string; classification: string;
+  sku: string; title: string; classification: string; fulfillment_channel: 'fba' | 'fbm';
   velocity: number | null; base_velocity: number | null;
   velocity_source: string; velocity_confidence: string; growth_multiplier: number;
   window_rates: { r7: number | null; r30: number | null; r60: number | null; r90: number | null };

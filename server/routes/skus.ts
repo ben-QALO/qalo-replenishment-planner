@@ -8,9 +8,11 @@ import { diffDays } from '../../engine/dates.ts';
 const PATCHABLE = [
   'classification', 'case_pack', 'moq', 'order_multiple',
   'velocity_override', 'growth_multiplier', 'template_override_id', 'notes',
+  'asin', 'fulfillment_channel',
 ] as const;
 
 const CLASSIFICATIONS = ['unclassified', 'replenishable', 'watch', 'discontinued', 'ignore'];
+const CHANNELS = ['fba', 'fbm'];
 
 function applyPatch(sku: string, patch: Record<string, unknown>): boolean {
   const db = getDb();
@@ -20,6 +22,9 @@ function applyPatch(sku: string, patch: Record<string, unknown>): boolean {
     if (!(field in patch)) continue;
     let v = patch[field];
     if (field === 'classification' && !CLASSIFICATIONS.includes(String(v))) continue;
+    // Fulfillment channel is constrained; blank is not allowed (defaults to 'fba').
+    if (field === 'fulfillment_channel') { const c = String(v).toLowerCase(); if (!CHANNELS.includes(c)) continue; v = c; }
+    if (field === 'asin' && typeof v === 'string') v = v.trim().toUpperCase() || null;
     if (v === '' || v === undefined) v = null;
     sets.push(`${field} = ?`);
     values.push(v);

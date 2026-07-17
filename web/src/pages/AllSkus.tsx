@@ -65,8 +65,8 @@ export function AllSkus({ data, refresh, openSku, initialStatus, initialFlag }: 
         patch.growth_multiplier = null;
         patch.template_override_id = null;
         patch.param_overrides = null;
-      } else if (bulkField === 'classification') {
-        patch.classification = bulkValue;
+      } else if (bulkField === 'classification' || bulkField === 'fulfillment_channel') {
+        patch[bulkField] = bulkValue;
       } else {
         const n = Number(bulkValue);
         if (!Number.isFinite(n)) { toast('Enter a number.'); setBusy(false); return; }
@@ -151,7 +151,8 @@ export function AllSkus({ data, refresh, openSku, initialStatus, initialFlag }: 
                       <div className="cell-title" style={{ maxWidth: 190 }}>{r.title}</div>
                     </td>
                     <td><StatusBadge status={r.status} /></td>
-                    <td style={{ fontSize: 11.5, color: 'var(--muted)' }}>{r.classification}</td>
+                    <td style={{ fontSize: 11.5, color: 'var(--muted)' }}>{r.classification}
+                      {r.fulfillment_channel === 'fbm' && <span className="flag" style={{ marginLeft: 4 }} title="Merchant-fulfilled — never shipped to FBA">FBM</span>}</td>
                     <td className="num">
                       {fmtNum(r.velocity)}
                       {r.velocity_source === 'manual' && <span className="flag" style={{ marginLeft: 4 }}>M</span>}
@@ -188,9 +189,11 @@ export function AllSkus({ data, refresh, openSku, initialStatus, initialFlag }: 
           <select value={bulkField} onChange={e => {
             setBulkField(e.target.value);
             if (e.target.value === 'classification') setBulkValue('replenishable');
+            else if (e.target.value === 'fulfillment_channel') setBulkValue('fbm');
             else setBulkValue('');
           }}>
             <option value="classification">Classify as</option>
+            <option value="fulfillment_channel">Set fulfillment</option>
             <option value="case_pack">Set case pack</option>
             <option value="moq">Set MOQ</option>
             <option value="order_multiple">Set order multiple</option>
@@ -201,6 +204,11 @@ export function AllSkus({ data, refresh, openSku, initialStatus, initialFlag }: 
           {bulkField === 'classification' ? (
             <select value={bulkValue} onChange={e => setBulkValue(e.target.value)}>
               {CLASSES.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+          ) : bulkField === 'fulfillment_channel' ? (
+            <select value={bulkValue} onChange={e => setBulkValue(e.target.value)}>
+              <option value="fba">FBA</option>
+              <option value="fbm">FBM</option>
             </select>
           ) : bulkField !== 'clear_overrides' ? (
             <input type="number" step="any" placeholder="value" value={bulkValue} onChange={e => setBulkValue(e.target.value)} style={{ width: 90 }} />
