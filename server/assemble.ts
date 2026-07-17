@@ -2,6 +2,7 @@
 import type Database from 'better-sqlite3';
 import type { EngineInput, EngineOutput, SkuSettings, SnapshotLine, TemplateParams, StockoutDays } from '../engine/types.ts';
 import { computeRecommendations } from '../engine/index.ts';
+import { attributeDemand } from './import/attribute-demand.ts';
 import { getRevision } from './db/connection.ts';
 
 export interface SnapshotMeta {
@@ -137,18 +138,18 @@ export function assembleEngineInput(db: Database.Database, overrideTemplateId?: 
     };
   }
 
-  // Business Report demand (FBM + FBA), joined child ASIN → SKU. A SKU with no ASIN or no
-  // matching report row simply falls back to the FBA-only velocity path.
-  const externalRows = db.prepare('SELECT asin, units, window_days FROM external_sales').all() as
-    { asin: string; units: number; window_days: number }[];
-  const demandByAsin = new Map<string, { units: number; days: number }>();
-  for (const r of externalRows) demandByAsin.set(String(r.asin).toUpperCase(), { units: r.units, days: r.window_days });
-  const externalDemand: Record<string, { units: number; days: number }> = {};
-  for (const r of skuRows) {
-    if (!r.asin) continue;
-    const d = demandByAsin.get(String(r.asin).trim().toUpperCase());
-    if (d) externalDemand[r.sku] = d;
-  }
+  // Business Report demand (FBM + FBA) → per SKU. Handles both report shapes (by-ASIN and
+  // by-SKU) and folds each ASIN's FBM/untracked sales onto its tracked FBA SKU, so an ASIN
+  // sold through several SKUs isn't double-counted. See import/attribute-demand.ts. A SKU with
+  // no ASIN or no matching report row simply falls back to the FBA-only velocity path.
+  const externalRows = db.prepare('SELECT asin, sku, units, window_days FROM external_sales').all() as
+    { asin: string; sku: string | null; units: number; window_days: number }[];
+  const windowDays = externalRows[0]?.window_days ?? 30;
+  const externalDemand = attributeDemand(
+    externalRows.map(r => ({ asin: String(r.asin), sku: r.sku, units: r.units })),
+    windowDays,
+    skuRows.filter(r => r.asin).map(r => ({ sku: r.sku, asin: String(r.asin) })),
+  );
 
   // Warehouse on-hand comes straight from the latest NetSuite import — the source of truth.
   // The tool does NOT track transfers on its own: when a shipment is created in Amazon,

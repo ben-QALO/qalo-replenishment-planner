@@ -44,7 +44,7 @@ export function Imports({ refresh }: { refresh: () => void }) {
     try {
       const res = await api.upload<any>('/api/business-report/import', file);
       setBrResult(res);
-      toast(`Business Report imported — ${res.matched} tracked ASINs matched (${res.with_sales} with sales).`);
+      toast(`Business Report imported — ${res.matched} tracked ${res.by_sku ? 'SKUs' : 'ASINs'} matched (${res.with_sales} with sales).`);
       refresh();
     } catch (err: any) { toast(`Business Report import failed: ${err.message}`); } finally { setBusy(false); }
   }
@@ -176,12 +176,12 @@ export function Imports({ refresh }: { refresh: () => void }) {
       <div style={{ marginTop: 18 }}>
         <h2 style={{ marginTop: 4 }}>3 · Amazon Business Report <span style={{ fontSize: 13, fontWeight: 400, color: 'var(--muted)' }}>— true FBM + FBA sales</span></h2>
         <div style={{ fontSize: 12, color: 'var(--muted)', margin: '-4px 0 10px', maxWidth: '86ch' }}>
-          The FBA export only shows FBA sales — a product that's out of stock on FBA, or a new item you're testing via merchant-fulfilled (FBM), won't show its real velocity. This report fixes that. Get the <b>Detail Page Sales &amp; Traffic by Child Item</b> report (last 30 days, by child ASIN) from{' '}
-          <a href="https://sellercentral.amazon.com/business-reports/ref=xx_sitemetric_dnav_xx#/report?id=102%3ADetailSalesTrafficByChildItem&chartCols=&columns=0%2F1%2F3%2F34%2F35%2F36%2F37"
+          The FBA export only shows FBA sales — a product that's out of stock on FBA, or a new item you're testing via merchant-fulfilled (FBM), won't show its real velocity. This report fixes that. Use the <b>Detail Page Sales &amp; Traffic by SKU</b> report (last 30 days) from{' '}
+          <a href="https://sellercentral.amazon.com/business-reports/ref=xx_sitemetric_dnav_xx#/report?id=102%3ADetailSalesTrafficBySKU&chartCols=&columns=0%2F1%2F2%2F3%2F8%2F9%2F14%2F15%2F20%2F21%2F26%2F27%2F28%2F29%2F30%2F31%2F32%2F33%2F34%2F35%2F36%2F37"
             target="_blank" rel="noopener noreferrer"
             style={{ color: 'var(--accent)', borderBottom: '1px solid color-mix(in srgb, var(--accent) 40%, transparent)' }}>
             Seller Central → Business Reports ↗
-          </a>
+          </a>. The <b>by-SKU</b> report is preferred: when one product sells through several SKUs (an FBA SKU plus an FBM one), it keeps each SKU's sales separate so demand isn't double-counted, then credits the FBM sales to your FBA SKU. The older by-Child-ASIN report still works.
         </div>
         <div
           className={`dropzone${brOver ? ' over' : ''}`}
@@ -196,7 +196,7 @@ export function Imports({ refresh }: { refresh: () => void }) {
             input.click();
           }}
         >
-          {busy ? 'Working…' : <><b>Drop your Business Report</b> (Sales &amp; Traffic by Child ASIN .csv)</>}
+          {busy ? 'Working…' : <><b>Drop your Business Report</b> (Sales &amp; Traffic by SKU .csv)</>}
         </div>
         {brResult && (
           <div className="card" style={{ marginTop: 10, padding: '10px 14px', fontSize: 12.5 }}>

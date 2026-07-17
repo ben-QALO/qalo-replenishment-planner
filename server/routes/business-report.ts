@@ -26,7 +26,9 @@ export function businessReportRoutes(app: FastifyInstance): void {
     }
 
     const db = getDb();
-    // Which ASINs do we actually track? (for the "matched" count)
+    // Which SKUs / ASINs do we actually track? (for the "matched" count)
+    const trackedSkus = new Set(
+      (db.prepare("SELECT sku FROM skus").all() as { sku: string }[]).map(r => r.sku));
     const trackedAsins = new Set(
       (db.prepare("SELECT DISTINCT asin FROM skus WHERE asin IS NOT NULL AND asin <> ''").all() as { asin: string }[])
         .map(r => r.asin.trim().toUpperCase()));
@@ -35,18 +37,19 @@ export function businessReportRoutes(app: FastifyInstance): void {
     let matched = 0, withSales = 0;
     const run = db.transaction(() => {
       db.prepare('DELETE FROM external_sales').run(); // one current report
-      const ins = db.prepare(`INSERT INTO external_sales (asin, units, window_days, title, source_file, imported_at)
-        VALUES (?, ?, ?, ?, ?, ?)
-        ON CONFLICT(asin) DO UPDATE SET units = excluded.units, window_days = excluded.window_days,
-          title = excluded.title, source_file = excluded.source_file, imported_at = excluded.imported_at`);
+      const ins = db.prepare(`INSERT INTO external_sales (asin, sku, units, window_days, title, source_file, imported_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)`);
       for (const row of parsed.rows) {
-        ins.run(row.asin, row.units, parsed.windowDays, row.title, original, now);
-        if (trackedAsins.has(row.asin)) { matched++; if (row.units > 0) withSales++; }
+        ins.run(row.asin, row.sku, row.units, parsed.windowDays, row.title, original, now);
+        // Count a row as "matched" if the tool tracks that SKU (by-SKU report) or ASIN (by-ASIN).
+        const isMatch = parsed.hasSku ? (row.sku ? trackedSkus.has(row.sku) : false) : trackedAsins.has(row.asin);
+        if (isMatch) { matched++; if (row.units > 0) withSales++; }
       }
+      const shape = parsed.hasSku ? 'SKUs' : 'ASINs';
       db.prepare(`INSERT INTO import_log (kind, filename, imported_at, status, rows_total, rows_ok, new_skus, warnings)
         VALUES ('business_report', ?, ?, 'committed', ?, ?, 0, ?)`)
         .run(original, now, parsed.rows.length, matched,
-          JSON.stringify([`${matched} tracked ASINs matched from "${parsed.unitsColumn}"`]));
+          JSON.stringify([`${matched} tracked ${shape} matched from "${parsed.unitsColumn}"`]));
     });
     run();
     bumpRevision();
@@ -57,6 +60,7 @@ export function businessReportRoutes(app: FastifyInstance): void {
       matched, with_sales: withSales,
       units_column: parsed.unitsColumn,
       window_days: parsed.windowDays,
+      by_sku: parsed.hasSku,
     };
   });
 
