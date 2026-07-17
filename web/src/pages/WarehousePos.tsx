@@ -38,14 +38,13 @@ export function WarehousePos({ data, refresh, initialTab }: { data: SkusResponse
 
 const TRANSFER_STATUS_META: Record<string, { c: string; bg: string; label: string }> = {
   proposed: { c: 'var(--atrisk)', bg: 'var(--atrisk-bg)', label: 'awaiting review' },
-  reviewed: { c: 'var(--po)', bg: 'var(--po-bg)', label: 'reviewed — ready to send' },
-  submitted: { c: 'var(--ship)', bg: 'var(--ship-bg)', label: 'in transit to FBA' },
-  reconciled: { c: 'var(--ok)', bg: 'var(--ok-bg)', label: 'reconciled' },
+  reviewed: { c: 'var(--po)', bg: 'var(--po-bg)', label: 'reviewed — ready to export' },
+  reconciled: { c: 'var(--ok)', bg: 'var(--ok-bg)', label: 'exported' },
   cancelled: { c: 'var(--neutral)', bg: 'var(--neutral-bg)', label: 'cancelled' },
   draft: { c: 'var(--atrisk)', bg: 'var(--atrisk-bg)', label: 'draft' },
 };
 
-// A shipment = the batch of lines created (proposed) or sent (submitted) together.
+// A shipment = the batch of lines created and reviewed together.
 type Batch = { key: string; rows: any[] };
 function groupByBatch(rows: any[]): Batch[] {
   const groups = new Map<string, any[]>();
@@ -90,7 +89,6 @@ function Transfers({ data, refresh }: { data: SkusResponse; refresh: () => void 
 
   const proposed = transfers.filter(t => t.status === 'proposed');
   const reviewed = transfers.filter(t => t.status === 'reviewed');
-  const inTransit = transfers.filter(t => t.status === 'submitted');
   const closed = transfers.filter(t => t.status === 'reconciled' || t.status === 'cancelled');
   const todayStr = new Date().toISOString().slice(0, 10);
   const ageDays = (d: string | null) => d ? Math.round((Date.parse(todayStr) - Date.parse(d.slice(0, 10))) / 86400000) : 0;
@@ -106,7 +104,6 @@ function Transfers({ data, refresh }: { data: SkusResponse; refresh: () => void 
     const defs: [string, boolean][] = [
       ...groupByBatch(proposed).map(b => [b.key, true] as [string, boolean]),
       ...groupByBatch(reviewed).map(b => [b.key, true] as [string, boolean]),
-      ...groupByBatch(inTransit).map(b => [b.key, false] as [string, boolean]),
     ];
     setCollapsed(new Set(defs.filter(([, d]) => open !== d).map(([k]) => k)));
   };
@@ -145,25 +142,17 @@ function Transfers({ data, refresh }: { data: SkusResponse; refresh: () => void 
       clearSel(); load(); refresh();
     } catch (err: any) { toast(err.message); }
   }
-  async function sendSel(ids: number[]) {
+  async function exportSel(ids: number[]) {
     if (ids.length === 0) return;
     if (!await confirmDialog({
-      title: `Send ${ids.length} request(s) to the warehouse?`,
-      body: `This deducts the units from usable warehouse stock now and downloads the warehouse file. You'll reconcile each one once it's inbound in Amazon.`,
-      confirmLabel: 'Send to warehouse',
+      title: `Export ${ids.length} request(s)?`,
+      body: `Downloads the warehouse request file and marks these done for this cycle. This does NOT change any warehouse numbers — create the real shipment in Amazon, and your next NetSuite + Amazon upload will reflect it.`,
+      confirmLabel: 'Export request',
     })) return;
     try {
-      const res = await api.post<{ filename: string; csv: string; line_count: number; total_units: number }>('/api/transfers/send-bulk', { ids });
+      const res = await api.post<{ filename: string; csv: string; line_count: number; total_units: number }>('/api/transfers/export-bulk', { ids });
       downloadCsv(res.filename, res.csv);
-      toast(`Sent ${res.line_count} to the warehouse — ${fmtInt(res.total_units)} units. File downloaded.`);
-      clearSel(); load(); refresh();
-    } catch (err: any) { toast(err.message); }
-  }
-  async function reconcileSel(ids: number[]) {
-    if (ids.length === 0) return;
-    try {
-      const res = await api.post<{ reconciled: number }>('/api/transfers/reconcile-bulk', { ids });
-      toast(`${res.reconciled} transfer(s) reconciled.`);
+      toast(`Exported ${res.line_count} line(s) — ${fmtInt(res.total_units)} units. File downloaded.`);
       clearSel(); load(); refresh();
     } catch (err: any) { toast(err.message); }
   }
@@ -171,7 +160,7 @@ function Transfers({ data, refresh }: { data: SkusResponse; refresh: () => void 
     if (ids.length === 0) return;
     if (!await confirmDialog({
       title: `Cancel ${ids.length} request(s)?`,
-      body: 'Any that were already sent return their units to the warehouse. This can’t be undone.',
+      body: 'Removes them from the worksheet. Nothing to undo — the tool never changed your warehouse numbers.',
       confirmLabel: 'Cancel requests', cancelLabel: 'Keep', danger: true,
     })) return;
     try {
@@ -238,8 +227,8 @@ function Transfers({ data, refresh }: { data: SkusResponse; refresh: () => void 
       <div className="toolbar">
         <span style={{ fontSize: 12.5, color: 'var(--muted)', flex: 1 }}>
           Requests flow left to right: the <b>Amazon team</b> creates them from the Action Center → the <b>inventory
-          team</b> reviews and adjusts quantities → the <b>Amazon team</b> sends the finalized shipment to the warehouse.
-          Units only leave the warehouse when a shipment is sent.
+          team</b> reviews and adjusts quantities → the <b>Amazon team</b> exports the finalized request and makes the
+          real shipment in Amazon. This is a worksheet — it never changes your warehouse numbers (NetSuite + Amazon do).
         </span>
         {anyOpen && (
           <>
@@ -303,21 +292,21 @@ function Transfers({ data, refresh }: { data: SkusResponse; refresh: () => void 
         )}
       </div>
 
-      {/* STEP 3 — Amazon team finalizes & sends */}
+      {/* STEP 3 — Amazon team exports the finalized request */}
       <div className="card" style={{ marginTop: 14 }}>
         <div className="card-head">
-          <h3>Reviewed — Amazon team to finalize &amp; send</h3>
+          <h3>Reviewed — Amazon team to export the request</h3>
           <span className="stage-meta">{reviewed.length} SKU{reviewed.length === 1 ? '' : 's'} · {fmtInt(units(reviewed))} units</span>
           <div className="spacer" />
           {selIn(reviewed).length > 0 && (
             <>
-              <button className="btn sm primary" onClick={() => sendSel(selIn(reviewed))}>Send {selIn(reviewed).length} to warehouse</button>{' '}
+              <button className="btn sm primary" onClick={() => exportSel(selIn(reviewed))}>Export {selIn(reviewed).length} request(s)</button>{' '}
               <button className="btn sm" onClick={() => reopenSel(selIn(reviewed))}>Send {selIn(reviewed).length} back</button>{' '}
               <button className="btn sm danger" onClick={() => cancelSel(selIn(reviewed))}>Cancel {selIn(reviewed).length}</button>
             </>
           )}
         </div>
-        {reviewed.length === 0 ? <div className="empty">Nothing waiting to send. Reviewed shipments land here for the Amazon team to finalize.</div> : (
+        {reviewed.length === 0 ? <div className="empty">Nothing to export yet. Reviewed shipments land here for the Amazon team to export and hand to the warehouse.</div> : (
           <table className="data">
             <thead><tr>
               <th className="plain" style={{ width: 32 }}></th>
@@ -331,7 +320,7 @@ function Transfers({ data, refresh }: { data: SkusResponse; refresh: () => void 
                 <tbody key={b.key}>
                   {shipHead(b, 7, true, `reviewed ${b.rows[0].reviewed_at?.slice(0, 10) ?? '—'}`, (
                     <>
-                      <button className="btn sm primary" onClick={() => sendSel(ids)}>Send shipment</button>{' '}
+                      <button className="btn sm primary" onClick={() => exportSel(ids)}>Export request</button>{' '}
                       <button className="btn sm" onClick={() => reopenSel(ids)}>Send back</button>{' '}
                       <button className="btn sm danger" onClick={() => cancelSel(ids)}>Cancel shipment</button>
                     </>
@@ -345,7 +334,7 @@ function Transfers({ data, refresh }: { data: SkusResponse; refresh: () => void 
                       <td className="num"><Requested t={t} /></td>
                       <td className="mono" style={{ fontSize: 11.5 }}>{t.reviewed_at?.slice(0, 10) ?? '—'}</td>
                       <td style={{ whiteSpace: 'nowrap' }}>
-                        <button className="btn sm primary" onClick={() => sendSel([t.id])}>Send</button>{' '}
+                        <button className="btn sm primary" onClick={() => exportSel([t.id])}>Export</button>{' '}
                         <button className="btn sm" onClick={() => reopenSel([t.id])}>Back</button>{' '}
                         <button className="btn sm" onClick={() => cancelSel([t.id])}>Cancel</button>
                       </td>
@@ -358,68 +347,11 @@ function Transfers({ data, refresh }: { data: SkusResponse; refresh: () => void 
         )}
       </div>
 
-      {/* STEP 4 — in transit, awaiting reconciliation */}
-      <div className="card" style={{ marginTop: 14 }}>
-        <div className="card-head">
-          <h3>In transit to FBA — awaiting reconciliation</h3>
-          <span className="stage-meta">{inTransit.length} SKU{inTransit.length === 1 ? '' : 's'} · {fmtInt(units(inTransit))} units</span>
-          <div className="spacer" />
-          {selIn(inTransit).length > 0 && (
-            <>
-              <button className="btn sm primary" onClick={() => reconcileSel(selIn(inTransit))}>Reconcile {selIn(inTransit).length}</button>{' '}
-              <button className="btn sm danger" onClick={() => cancelSel(selIn(inTransit))}>Cancel {selIn(inTransit).length}</button>
-            </>
-          )}
-        </div>
-        {inTransit.length === 0 ? <div className="empty">No transfers in flight. Send a reviewed shipment above to move it here.</div> : (
-          <table className="data">
-            <thead><tr>
-              <th className="plain" style={{ width: 32 }}></th>
-              <th className="plain">Product</th><th className="num">Qty sent</th><th className="plain">Sent</th>
-              <th className="plain">Age</th><th className="plain">Status</th><th className="plain"></th>
-            </tr></thead>
-            {groupByBatch(inTransit).map(b => {
-              const open = isOpen(b.key, false);
-              const ids = b.rows.map(r => r.id);
-              return (
-                <tbody key={b.key}>
-                  {shipHead(b, 7, false, `sent ${b.rows[0].submitted_at?.slice(0, 10) ?? '—'}`, (
-                    <>
-                      <button className="btn sm primary" onClick={() => reconcileSel(ids)}>Reconcile shipment</button>{' '}
-                      <button className="btn sm danger" onClick={() => cancelSel(ids)}>Cancel shipment</button>
-                    </>
-                  ))}
-                  {open && sortRows(b.rows).map(t => {
-                    const age = ageDays(t.submitted_at);
-                    const m = TRANSFER_STATUS_META[t.status];
-                    return (
-                      <tr key={t.id}>
-                        <td><RowBox id={t.id} /></td>
-                        <td><Product t={t} /></td>
-                        <td className="num">{fmtInt(t.qty)}</td>
-                        <td className="mono" style={{ fontSize: 11.5 }}>{t.submitted_at?.slice(0, 10)}</td>
-                        <td className="mono" style={{ fontSize: 11.5, color: age >= 14 ? 'var(--atrisk)' : 'var(--muted)', fontWeight: age >= 14 ? 700 : 400 }}>
-                          {age}d{age >= 14 ? ' ⚠' : ''}</td>
-                        <td><span className="badge" style={{ ['--b-c' as any]: m.c, ['--b-bg' as any]: m.bg }}>{m.label}</span></td>
-                        <td style={{ whiteSpace: 'nowrap' }}>
-                          <button className="btn sm primary" onClick={() => reconcileSel([t.id])}>Reconcile</button>{' '}
-                          <button className="btn sm" onClick={() => cancelSel([t.id])}>Cancel</button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              );
-            })}
-          </table>
-        )}
-      </div>
-
       {closed.length > 0 && (
         <div className="card" style={{ marginTop: 14 }}>
-          <div className="card-head"><h3>Recently closed</h3><span className="stage-meta">reconciled &amp; cancelled shipments</span></div>
+          <div className="card-head"><h3>Recently closed</h3><span className="stage-meta">exported &amp; cancelled requests</span></div>
           <table className="data">
-            <thead><tr><th className="plain">Shipment</th><th className="plain">Product</th><th className="num">Qty</th><th className="num">Asked</th><th className="plain">Sent</th><th className="plain">Outcome</th></tr></thead>
+            <thead><tr><th className="plain">Shipment</th><th className="plain">Product</th><th className="num">Qty</th><th className="num">Asked</th><th className="plain">Exported</th><th className="plain">Outcome</th></tr></thead>
             <tbody>
               {closed.slice(0, 60).map(t => (
                 <tr key={t.id}>
@@ -427,12 +359,12 @@ function Transfers({ data, refresh }: { data: SkusResponse; refresh: () => void 
                   <td className="sku-code">{t.sku}</td>
                   <td className="num">{fmtInt(t.qty)}</td>
                   <td className="num">{t.requested_qty != null && t.requested_qty !== t.qty ? <span className="mono" style={{ fontSize: 11, color: 'var(--muted)' }}>{fmtInt(t.requested_qty)}</span> : <span style={{ color: 'var(--muted)' }}>—</span>}</td>
-                  <td className="mono" style={{ fontSize: 11.5 }}>{t.submitted_at?.slice(0, 10) ?? '—'}</td>
+                  <td className="mono" style={{ fontSize: 11.5 }}>{t.reconciled_at?.slice(0, 10) ?? '—'}</td>
                   <td>
                     <span className="badge" style={{
                       ['--b-c' as any]: t.status === 'reconciled' ? 'var(--ok)' : 'var(--neutral)',
                       ['--b-bg' as any]: t.status === 'reconciled' ? 'var(--ok-bg)' : 'var(--neutral-bg)',
-                    }}>{t.status === 'reconciled' ? `reconciled ${t.reconciled_at?.slice(0, 10) ?? ''}` : 'cancelled'}</span>
+                    }}>{t.status === 'reconciled' ? `exported ${t.reconciled_at?.slice(0, 10) ?? ''}` : 'cancelled'}</span>
                   </td>
                 </tr>
               ))}

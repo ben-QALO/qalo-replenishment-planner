@@ -41,8 +41,7 @@ const Chevron = () => (
 type QueueKey = 'ship' | 'po' | 'risk';
 
 interface Worklist {
-  transfers_to_review: number; transfers_to_send: number;
-  transfers_to_reconcile: number; transfers_look_inbound: number; transfers_open_total: number;
+  transfers_to_review: number; transfers_to_export: number;
   pos_to_action: number; new_products: number; no_velocity: number; total: number;
 }
 
@@ -218,12 +217,10 @@ export function Dashboard({ data, worklist, refresh, openSku, go }: {
   const excludedCasePack = selling.length - scored.length;
 
   const wl = worklist;
-  const reconcileCount = (wl?.transfers_to_reconcile ?? 0) + (wl?.transfers_look_inbound ?? 0);
+  const openRequests = (wl?.transfers_to_review ?? 0) + (wl?.transfers_to_export ?? 0);
   const wlItems = wl ? [
     { n: wl.transfers_to_review, label: 'requests to review', hint: 'inventory team: check & adjust quantities', hash: '#/warehouse?tab=transfers', tone: 'var(--po)' },
-    { n: wl.transfers_to_send, label: 'requests to send', hint: 'Amazon team: finalize & send to the warehouse', hash: '#/warehouse?tab=transfers', tone: 'var(--ship)' },
-    { n: wl.transfers_to_reconcile, label: 'transfers to reconcile', hint: 'confirm created & inbound in Amazon', hash: '#/warehouse?tab=transfers', tone: 'var(--po)' },
-    { n: wl.transfers_look_inbound, label: 'look inbound — reconcile', hint: 'Amazon appears to show these', hash: '#/warehouse?tab=transfers', tone: 'var(--ship)' },
+    { n: wl.transfers_to_export, label: 'requests to export', hint: 'Amazon team: export the request & make the shipment in Amazon', hash: '#/warehouse?tab=transfers', tone: 'var(--ship)' },
     { n: wl.pos_to_action, label: 'POs to update', hint: 'draft to send, or overdue', hash: '#/warehouse?tab=pos', tone: 'var(--atrisk)' },
     { n: wl.new_products, label: 'new products to classify', hint: 'keep or ignore', hash: '#/skus?status=UNCLASSIFIED', tone: 'var(--atrisk)' },
     { n: wl.no_velocity, label: 'missing a sales rate', hint: 'set expected units sold per day', hash: '#/skus?flag=NO_VELOCITY', tone: 'var(--stockout)' },
@@ -275,8 +272,8 @@ export function Dashboard({ data, worklist, refresh, openSku, go }: {
             color="var(--c-ship)" pct={share(s.ship_skus)} icon={<ShipIcon />} onClick={() => setQueue('ship')} />
           <StatCard label="To order" value={s.po_units_total} sub={`units from China · ${fmtInt(s.po_skus)} SKUs`}
             color="var(--c-order)" pct={share(s.po_skus)} icon={<OrderIcon />} onClick={() => setQueue('po')} />
-          <StatCard label="To reconcile" value={reconcileCount} sub="transfers to confirm inbound"
-            color="var(--c-health)" pct={wl && wl.transfers_open_total > 0 ? reconcileCount / wl.transfers_open_total : 0}
+          <StatCard label="Open requests" value={openRequests} sub="transfer requests to review & export"
+            color="var(--c-health)" pct={openRequests > 0 ? 1 : 0}
             icon={<ReconcileIcon />} onClick={() => go('#/warehouse?tab=transfers')} />
         </div>
       </div>

@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { getDb, bumpRevision, nowIso, today, DATA_DIR } from '../db/connection.ts';
-import { currentRecommendations, latestSnapshot } from '../assemble.ts';
+import { latestSnapshot } from '../assemble.ts';
 import { toCsv } from '../export/csv.ts';
 
 interface SubmitLine { sku: string; qty: number; }
@@ -17,14 +17,14 @@ function defaultTransferName(dateIso: string): string {
 export function transferRoutes(app: FastifyInstance): void {
   app.get('/api/transfers', () => {
     const db = getDb();
-    // Active pipeline (proposed → reviewed → submitted) plus recently closed.
+    // Active worksheet (proposed → reviewed) plus recently closed (exported / cancelled).
     const rows = db.prepare(`SELECT t.*, s.title FROM transfers t LEFT JOIN skus s ON s.sku = t.sku
-      WHERE t.status IN ('proposed','reviewed','submitted','draft')
+      WHERE t.status IN ('proposed','reviewed','draft')
          OR t.reconciled_at > date('now','-30 days')
          OR (t.status='cancelled' AND t.created_at > date('now','-14 days'))
       ORDER BY
-        CASE t.status WHEN 'proposed' THEN 0 WHEN 'reviewed' THEN 1 WHEN 'submitted' THEN 2 ELSE 3 END,
-        t.submitted_at DESC, t.reviewed_at DESC, t.created_at DESC, t.id DESC`).all();
+        CASE t.status WHEN 'proposed' THEN 0 WHEN 'reviewed' THEN 1 ELSE 2 END,
+        t.reconciled_at DESC, t.reviewed_at DESC, t.created_at DESC, t.id DESC`).all();
     return { transfers: rows };
   });
 
@@ -92,78 +92,50 @@ export function transferRoutes(app: FastifyInstance): void {
   });
 
   /**
-   * STEP 3 — Amazon team applies the modifications and sends to the warehouse.
-   * reviewed → submitted: stamps submitted_at + a fresh baseline_fba (the netting anchor),
-   * which is the moment the units leave usable warehouse stock and start counting as in
-   * transit to FBA. Returns the warehouse request CSV for the batch just sent.
+   * STEP 3 — Amazon team exports the finalized request to hand to the warehouse (and to
+   * create the real shipment in Amazon). This is a worksheet hand-off: it downloads the
+   * request CSV and closes the batch. It does NOT touch warehouse stock or count anything
+   * as in transit — NetSuite + Amazon are the source of truth and reflect the real shipment
+   * on your next upload. Closed batches use status='reconciled' (i.e. "done for this cycle").
    */
-  app.post('/api/transfers/send-bulk', (req, reply) => {
+  app.post('/api/transfers/export-bulk', (req, reply) => {
     const ids = ((req.body ?? {}) as { ids?: number[] }).ids ?? [];
     if (!Array.isArray(ids) || ids.length === 0) return reply.code(400).send({ error: 'ids[] required' });
 
     const db = getDb();
     const now = nowIso();
-    const batchId = `T-${now.replace(/[-:T.Z]/g, '').slice(0, 14)}`;
-    const output = currentRecommendations(db, today());
-    const byResult = new Map((output?.results ?? []).map(r => [r.sku, r]));
+    const titleBySku = new Map((db.prepare('SELECT sku, title FROM skus').all() as any[]).map(r => [r.sku, r.title]));
 
-    const sent: { sku: string; qty: number; title: string }[] = [];
+    const exported: { sku: string; qty: number; title: string }[] = [];
     const run = db.transaction(() => {
       const rowStmt = db.prepare("SELECT id, sku, qty FROM transfers WHERE id=? AND status='reviewed'");
-      const upd = db.prepare("UPDATE transfers SET status='submitted', submitted_at=?, batch_id=?, baseline_fba=? WHERE id=?");
+      const upd = db.prepare("UPDATE transfers SET status='reconciled', reconciled_at=? WHERE id=?");
       for (const id of ids) {
         const row = rowStmt.get(Number(id)) as { id: number; sku: string; qty: number } | undefined;
         if (!row) continue;
-        const r = byResult.get(row.sku);
-        const baseline = r ? r.fba_available + r.fba_inbound : 0;
-        upd.run(now, batchId, baseline, row.id);
-        sent.push({ sku: row.sku, qty: row.qty, title: r?.title ?? '' });
+        upd.run(now, row.id);
+        exported.push({ sku: row.sku, qty: row.qty, title: titleBySku.get(row.sku) ?? '' });
       }
     });
     run();
-    if (sent.length === 0) return reply.code(409).send({ error: 'nothing to send — select reviewed requests' });
+    if (exported.length === 0) return reply.code(409).send({ error: 'nothing to export — select reviewed requests' });
     bumpRevision();
 
-    const csv = toCsv([['Merchant SKU', 'Quantity'], ...sent.map(l => [l.sku, l.qty])]);
-    const detailed = toCsv([['Merchant SKU', 'Product Name', 'Quantity'], ...sent.map(l => [l.sku, l.title, l.qty])]);
-    const filename = `transfer-request-${today()}-${batchId}.csv`;
+    const csv = toCsv([['Merchant SKU', 'Quantity'], ...exported.map(l => [l.sku, l.qty])]);
+    const detailed = toCsv([['Merchant SKU', 'Product Name', 'Quantity'], ...exported.map(l => [l.sku, l.title, l.qty])]);
+    const filename = `transfer-request-${today()}.csv`;
     writeFileSync(join(DATA_DIR, 'exports', filename), detailed);
 
-    return { ok: true, batch_id: batchId, filename, csv, line_count: sent.length, total_units: sent.reduce((s, l) => s + l.qty, 0) };
+    return { ok: true, filename, csv, line_count: exported.length, total_units: exported.reduce((s, l) => s + l.qty, 0) };
   });
 
-  // Reconcile (next session): the Amazon team confirms the shipment was created and is
-  // inbound in Amazon. Closes the transfer; the tool now relies on Amazon's numbers.
-  app.post('/api/transfers/:id/reconcile', (req, reply) => {
-    const id = Number((req.params as any).id);
-    const db = getDb();
-    const t = db.prepare("SELECT id FROM transfers WHERE id = ? AND status = 'submitted'").get(id);
-    if (!t) return reply.code(404).send({ error: 'open transfer not found' });
-    db.prepare("UPDATE transfers SET status = 'reconciled', reconciled_at = ? WHERE id = ?").run(nowIso(), id);
-    bumpRevision();
-    return { ok: true };
-  });
-
-  app.post('/api/transfers/reconcile-bulk', (req, reply) => {
-    const ids = ((req.body ?? {}) as { ids?: number[] }).ids ?? [];
-    if (!Array.isArray(ids) || ids.length === 0) return reply.code(400).send({ error: 'ids[] required' });
-    const db = getDb();
-    const now = nowIso();
-    const stmt = db.prepare("UPDATE transfers SET status = 'reconciled', reconciled_at = ? WHERE id = ? AND status = 'submitted'");
-    let n = 0;
-    const run = db.transaction(() => { for (const id of ids) n += stmt.run(now, Number(id)).changes; });
-    run();
-    if (n > 0) bumpRevision();
-    return { ok: true, reconciled: n };
-  });
-
-  // Cancel works at any pre-reconciled stage (proposed / reviewed / submitted). Units on a
-  // sent (submitted) transfer return to usable warehouse stock automatically once cancelled.
+  // Cancel a proposed/reviewed request (drops it from the worksheet). Nothing to undo in the
+  // warehouse — the tool never deducted anything.
   app.post('/api/transfers/cancel-bulk', (req, reply) => {
     const ids = ((req.body ?? {}) as { ids?: number[] }).ids ?? [];
     if (!Array.isArray(ids) || ids.length === 0) return reply.code(400).send({ error: 'ids[] required' });
     const db = getDb();
-    const stmt = db.prepare("UPDATE transfers SET status = 'cancelled' WHERE id = ? AND status IN ('proposed','reviewed','submitted')");
+    const stmt = db.prepare("UPDATE transfers SET status = 'cancelled' WHERE id = ? AND status IN ('proposed','reviewed')");
     let n = 0;
     const run = db.transaction(() => { for (const id of ids) n += stmt.run(Number(id)).changes; });
     run();
@@ -203,14 +175,5 @@ export function transferRoutes(app: FastifyInstance): void {
     if (res.changes === 0) return reply.code(404).send({ error: 'batch not found' });
     bumpRevision();
     return { ok: true, updated: res.changes };
-  });
-
-  app.post('/api/transfers/:id/cancel', (req, reply) => {
-    const id = Number((req.params as any).id);
-    const db = getDb();
-    const res = db.prepare("UPDATE transfers SET status = 'cancelled' WHERE id = ? AND status = 'submitted'").run(id);
-    if (res.changes === 0) return reply.code(404).send({ error: 'open transfer not found' });
-    bumpRevision();
-    return { ok: true };
   });
 }

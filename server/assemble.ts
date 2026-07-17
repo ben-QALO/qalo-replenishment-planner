@@ -2,7 +2,6 @@
 import type Database from 'better-sqlite3';
 import type { EngineInput, EngineOutput, SkuSettings, SnapshotLine, TemplateParams, StockoutDays } from '../engine/types.ts';
 import { computeRecommendations } from '../engine/index.ts';
-import { netTransfers, type OpenTransfer, type WarehouseRow } from '../engine/transfers.ts';
 import { getRevision } from './db/connection.ts';
 
 export interface SnapshotMeta {
@@ -151,26 +150,15 @@ export function assembleEngineInput(db: Database.Database, overrideTemplateId?: 
     if (d) externalDemand[r.sku] = d;
   }
 
-  // Net open transfers against both files (pure, per-SKU — see engine/transfers.ts):
-  //  - warehouse is netted only for transfers THIS sku's import hasn't reflected yet
-  //    (per-SKU cutoff — a global one would double-count when other SKUs are updated or
-  //    when this SKU is missing from an import);
-  //  - in-transit-to-FBA is what Amazon hasn't yet taken in since the transfer submitted
-  //    (per-transfer baseline), so a unit is never counted in both warehouse and FBA.
-  const whRows = db.prepare('SELECT sku, qty_on_hand, updated_at FROM warehouse_inventory').all() as any[];
-  const whMap: Record<string, WarehouseRow> = {};
-  for (const r of whRows) whMap[r.sku] = { onHand: r.qty_on_hand, updatedAt: r.updated_at };
-
-  const openTransfers = db.prepare(
-    "SELECT sku, qty, submitted_at, baseline_fba FROM transfers WHERE status = 'submitted'").all() as OpenTransfer[];
-
-  const amazonFba: Record<string, number> = {};
-  for (const l of lines) amazonFba[l.sku] = (l.available ?? 0)
-    + (l.inbound_working ?? 0) + (l.inbound_shipped ?? 0) + (l.inbound_received ?? 0);
-
-  const net = netTransfers(openTransfers, whMap, amazonFba);
-  const warehouse = net.warehouseUsable;
-  const inTransitToFba = net.inTransit;
+  // Warehouse on-hand comes straight from the latest NetSuite import — the source of truth.
+  // The tool does NOT track transfers on its own: when a shipment is created in Amazon,
+  // NetSuite already decrements on-hand AND Amazon reports the units as inbound, so any
+  // tool-side netting here would double-count. In-transit-to-FBA therefore comes entirely
+  // from Amazon's inbound fields (see computePositions) — never from tool transfers.
+  const whRows = db.prepare('SELECT sku, qty_on_hand FROM warehouse_inventory').all() as any[];
+  const warehouse: Record<string, number> = {};
+  for (const r of whRows) warehouse[r.sku] = r.qty_on_hand;
+  const inTransitToFba: Record<string, number> = {};
 
   const openPoLines = (db.prepare(`SELECT pl.sku, pl.qty_ordered - pl.qty_received AS qty_outstanding,
       po.expected_arrival, po.po_number
