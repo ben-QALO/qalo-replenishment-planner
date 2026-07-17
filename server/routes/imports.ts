@@ -35,7 +35,16 @@ export function importRoutes(app: FastifyInstance): void {
     const fileId = `upload-${Date.now()}-${original}`;
     writeFileSync(join(IMPORT_DIR(), fileId), buf);
 
-    const { fileHash, parsed, mapping, normalized } = analyze(fileId);
+    let analysis;
+    try {
+      analysis = analyze(fileId);
+    } catch (err: any) {
+      return reply.code(422).send({
+        error: `That file couldn't be read as an FBA Inventory export — check it's the "Manage Inventory Health" CSV (not an Excel file or a different report). ${err?.message ?? ''}`.trim(),
+        file_id: fileId,
+      });
+    }
+    const { fileHash, parsed, mapping, normalized } = analysis;
     const db = getDb();
 
     if (mapping.missingRequired.length > 0) {

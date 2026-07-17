@@ -5,7 +5,7 @@ import { existsSync } from 'node:fs';
 import { timingSafeEqual } from 'node:crypto';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { getDb, backupDaily } from './db/connection.ts';
+import { getDb, backupDaily, ensureDataDirs } from './db/connection.ts';
 import { dashboardRoutes } from './routes/dashboard.ts';
 import { skuRoutes } from './routes/skus.ts';
 import { importRoutes } from './routes/imports.ts';
@@ -77,6 +77,7 @@ if (existsSync(join(WEB_DIST, 'index.html'))) {
   app.get('/', () => ({ status: 'API running — frontend build missing (web/dist). Run: npm run build:web' }));
 }
 
+ensureDataDirs(); // create data/imports + data/exports before any upload can be written
 getDb(); // open + migrate before accepting traffic
 await backupDaily();
 await app.listen({ port: PORT, host: HOST });

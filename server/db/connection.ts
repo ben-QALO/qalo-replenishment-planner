@@ -15,9 +15,22 @@ const BACKUP_KEEP = 30;
 
 let db: Database.Database | null = null;
 
+/**
+ * Make sure the data directory and its subfolders exist. Uploads (imports) and generated
+ * files (exports) are written here BEFORE the DB is touched, so on a fresh deploy volume —
+ * where only the DB file was copied up — these folders would be missing and the first
+ * upload would crash with a bare 500. Called at server startup, before any request.
+ */
+export function ensureDataDirs(): void {
+  mkdirSync(DATA_DIR, { recursive: true });
+  mkdirSync(join(DATA_DIR, 'imports'), { recursive: true });
+  mkdirSync(join(DATA_DIR, 'exports'), { recursive: true });
+  mkdirSync(BACKUP_DIR, { recursive: true });
+}
+
 export function getDb(): Database.Database {
   if (db) return db;
-  mkdirSync(DATA_DIR, { recursive: true });
+  ensureDataDirs();
   db = new Database(DB_PATH);
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
