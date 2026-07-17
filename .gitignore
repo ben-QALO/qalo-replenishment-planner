@@ -11,3 +11,6 @@ node_modules/
 
 # Built frontend (the Dockerfile rebuilds this on deploy — no need to store it)
 web/dist/
+# Stray import/export files accidentally dropped in the project root
+/*.xls
+/*.xlsx
