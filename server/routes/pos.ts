@@ -1,5 +1,8 @@
 import type { FastifyInstance } from 'fastify';
-import { getDb, bumpRevision, nowIso, today } from '../db/connection.ts';
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { getDb, bumpRevision, nowIso, today, DATA_DIR } from '../db/connection.ts';
+import { toCsv } from '../export/csv.ts';
 
 const STATUSES = ['draft', 'ordered', 'in_transit', 'received', 'cancelled'];
 
@@ -17,6 +20,31 @@ export function poRoutes(app: FastifyInstance): void {
     const lines = db.prepare('SELECT * FROM po_lines').all() as any[];
     for (const po of pos) po.lines = lines.filter(l => l.po_id === po.id);
     return { pos };
+  });
+
+  // Download every PO as CSV (one row per SKU line; PO header repeated on each line).
+  app.get('/api/pos/export.csv', (_req, reply) => {
+    const db = getDb();
+    const pos = db.prepare('SELECT * FROM purchase_orders ORDER BY created_at DESC').all() as any[];
+    const lines = db.prepare('SELECT * FROM po_lines').all() as any[];
+    const out: unknown[][] = [[
+      'PO Name', 'PO Number', 'Supplier', 'Status', 'Review State',
+      'Ordered Date', 'Expected Arrival', 'Received Date',
+      'SKU', 'Qty Ordered', 'Qty Received', 'Outstanding',
+    ]];
+    for (const po of pos) {
+      const head = [po.name ?? '', po.po_number ?? '', po.supplier ?? '', po.status, po.review_state ?? '',
+        po.ordered_date ?? '', po.expected_arrival ?? '', po.received_date ?? ''];
+      const pol = lines.filter(l => l.po_id === po.id);
+      if (pol.length === 0) { out.push([...head, '', '', '', '']); continue; }
+      for (const l of pol) out.push([...head, l.sku, l.qty_ordered, l.qty_received, l.qty_ordered - l.qty_received]);
+    }
+    const csv = toCsv(out);
+    const filename = `purchase-orders-${today()}.csv`;
+    writeFileSync(join(DATA_DIR, 'exports', filename), csv);
+    reply.header('Content-Type', 'text/csv');
+    reply.header('Content-Disposition', `attachment; filename="${filename}"`);
+    return csv;
   });
 
   /**

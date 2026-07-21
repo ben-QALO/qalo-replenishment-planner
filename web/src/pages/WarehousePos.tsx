@@ -236,6 +236,7 @@ function Transfers({ data, refresh }: { data: SkusResponse; refresh: () => void 
             <button className="btn sm" onClick={() => setAll(false)}>Collapse all</button>
           </>
         )}
+        <a className="btn sm" href="/api/transfers/export.csv">⭳ Export CSV</a>
       </div>
 
       {/* STEP 2 — inventory team reviews */}
@@ -576,6 +577,7 @@ function Pos({ refresh }: { refresh: () => void }) {
           ))}
         </div>
         <div className="spacer" />
+        <a className="btn sm" href="/api/pos/export.csv">⭳ Export CSV</a>
         {visible.length > 0 && (
           <>
             <button className="btn sm" onClick={() => setAllOpen(true)}>Expand all</button>

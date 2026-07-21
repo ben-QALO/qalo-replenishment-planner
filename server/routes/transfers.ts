@@ -28,6 +28,33 @@ export function transferRoutes(app: FastifyInstance): void {
     return { transfers: rows };
   });
 
+  // Download every transfer as CSV (all stages, one row per SKU line).
+  app.get('/api/transfers/export.csv', (_req, reply) => {
+    const db = getDb();
+    const rows = db.prepare(`SELECT t.*, s.title FROM transfers t LEFT JOIN skus s ON s.sku = t.sku
+      ORDER BY t.created_at DESC, t.id DESC`).all() as any[];
+    const stageLabel: Record<string, string> = {
+      proposed: 'proposed', reviewed: 'reviewed', reconciled: 'exported', cancelled: 'cancelled', submitted: 'exported', draft: 'draft',
+    };
+    const day = (s: string | null) => (s ?? '').slice(0, 10);
+    const out: unknown[][] = [[
+      'Shipment', 'Batch ID', 'SKU', 'Product', 'Quantity', 'Originally Requested',
+      'Status', 'Created', 'Reviewed', 'Exported/Closed', 'Note',
+    ]];
+    for (const t of rows) {
+      out.push([
+        t.batch_name ?? '', t.batch_id ?? '', t.sku, t.title ?? '', t.qty, t.requested_qty ?? '',
+        stageLabel[t.status] ?? t.status, day(t.created_at), day(t.reviewed_at), day(t.reconciled_at), t.review_note ?? '',
+      ]);
+    }
+    const csv = toCsv(out);
+    const filename = `transfers-${today()}.csv`;
+    writeFileSync(join(DATA_DIR, 'exports', filename), csv);
+    reply.header('Content-Type', 'text/csv');
+    reply.header('Content-Disposition', `attachment; filename="${filename}"`);
+    return csv;
+  });
+
   /**
    * STEP 1 — Amazon team's initial request. Creates one transfer per line as 'proposed'.
    * Proposed transfers do NOT touch warehouse stock and are NOT counted as in transit —
