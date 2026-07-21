@@ -334,7 +334,8 @@ export function Dashboard({ data, worklist, refresh, openSku, go }: {
               <tbody>
                 {riskRows.slice(0, 200).map(r => (
                   <tr key={r.sku}>
-                    <td><span className="sku-code" style={{ cursor: 'pointer' }} onClick={() => openSku(r.sku)}>{r.sku}</span>
+                    <td><span className="sku-code" style={{ cursor: 'pointer' }} onClick={() => openSku(r.sku)}>{r.qalo_sku ?? r.sku}</span>
+                      {r.qalo_sku && r.qalo_sku !== r.sku && <span className="mono" style={{ fontSize: 10.5, color: 'var(--muted)', marginLeft: 5 }}>Amazon: {r.sku}</span>}
                       <div className="cell-title">{r.title}</div></td>
                     <td><StatusBadge status={r.status} /> <Flags flags={r.flags} max={2} /></td>
                     <td style={{ maxWidth: 400 }}><span style={{ fontFamily: 'var(--serif)', fontStyle: 'italic', fontSize: 13, color: 'var(--ink-2)' }}>{r.why}</span></td>
@@ -383,7 +384,8 @@ export function Dashboard({ data, worklist, refresh, openSku, go }: {
                         <td className="q-expand"><Chevron /></td>
                         <td onClick={stop}><input type="checkbox" checked={!unchecked[key]} onChange={e => setUnchecked(u => ({ ...u, [key]: !e.target.checked }))} /></td>
                         <td onClick={stop}>
-                          <span className="sku-code" style={{ cursor: 'pointer' }} onClick={() => openSku(r.sku)}>{r.sku}</span>
+                          <span className="sku-code" style={{ cursor: 'pointer' }} onClick={() => openSku(r.sku)}>{r.qalo_sku ?? r.sku}</span>
+                          {r.qalo_sku && r.qalo_sku !== r.sku && <span className="mono" style={{ fontSize: 10.5, color: 'var(--muted)', marginLeft: 5 }}>Amazon: {r.sku}</span>}
                           <div className="cell-title" style={{ maxWidth: 260 }}>{r.title}</div>
                         </td>
                         <td><StatusBadge status={r.status} /> <Flags flags={r.flags} max={1} /></td>

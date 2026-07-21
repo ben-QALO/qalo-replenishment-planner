@@ -18,7 +18,9 @@ export function transferRoutes(app: FastifyInstance): void {
   app.get('/api/transfers', () => {
     const db = getDb();
     // Active worksheet (proposed → reviewed) plus recently closed (exported / cancelled).
-    const rows = db.prepare(`SELECT t.*, s.title FROM transfers t LEFT JOIN skus s ON s.sku = t.sku
+    // Attach the QALO SKU (team-facing) alongside the Amazon SKU the transfer is keyed by.
+    const rows = db.prepare(`SELECT t.*, s.title, COALESCE(m.qalo_sku, t.sku) AS qalo_sku
+      FROM transfers t LEFT JOIN skus s ON s.sku = t.sku LEFT JOIN sku_map m ON m.amazon_sku = t.sku
       WHERE t.status IN ('proposed','reviewed','draft')
          OR t.reconciled_at > date('now','-30 days')
          OR (t.status='cancelled' AND t.created_at > date('now','-14 days'))
@@ -31,19 +33,20 @@ export function transferRoutes(app: FastifyInstance): void {
   // Download every transfer as CSV (all stages, one row per SKU line).
   app.get('/api/transfers/export.csv', (_req, reply) => {
     const db = getDb();
-    const rows = db.prepare(`SELECT t.*, s.title FROM transfers t LEFT JOIN skus s ON s.sku = t.sku
+    const rows = db.prepare(`SELECT t.*, s.title, COALESCE(m.qalo_sku, t.sku) AS qalo_sku
+      FROM transfers t LEFT JOIN skus s ON s.sku = t.sku LEFT JOIN sku_map m ON m.amazon_sku = t.sku
       ORDER BY t.created_at DESC, t.id DESC`).all() as any[];
     const stageLabel: Record<string, string> = {
       proposed: 'proposed', reviewed: 'reviewed', reconciled: 'exported', cancelled: 'cancelled', submitted: 'exported', draft: 'draft',
     };
     const day = (s: string | null) => (s ?? '').slice(0, 10);
     const out: unknown[][] = [[
-      'Shipment', 'Batch ID', 'SKU', 'Product', 'Quantity', 'Originally Requested',
+      'QALO SKU', 'Amazon SKU', 'Shipment', 'Batch ID', 'Product', 'Quantity', 'Originally Requested',
       'Status', 'Created', 'Reviewed', 'Exported/Closed', 'Note',
     ]];
     for (const t of rows) {
       out.push([
-        t.batch_name ?? '', t.batch_id ?? '', t.sku, t.title ?? '', t.qty, t.requested_qty ?? '',
+        t.qalo_sku, t.sku, t.batch_name ?? '', t.batch_id ?? '', t.title ?? '', t.qty, t.requested_qty ?? '',
         stageLabel[t.status] ?? t.status, day(t.created_at), day(t.reviewed_at), day(t.reconciled_at), t.review_note ?? '',
       ]);
     }
@@ -131,9 +134,10 @@ export function transferRoutes(app: FastifyInstance): void {
 
     const db = getDb();
     const now = nowIso();
-    const titleBySku = new Map((db.prepare('SELECT sku, title FROM skus').all() as any[]).map(r => [r.sku, r.title]));
+    const metaBySku = new Map((db.prepare(`SELECT s.sku, s.title, COALESCE(m.qalo_sku, s.sku) AS qalo_sku
+      FROM skus s LEFT JOIN sku_map m ON m.amazon_sku = s.sku`).all() as any[]).map(r => [r.sku, r]));
 
-    const exported: { sku: string; qty: number; title: string }[] = [];
+    const exported: { sku: string; qalo_sku: string; qty: number; title: string }[] = [];
     const run = db.transaction(() => {
       const rowStmt = db.prepare("SELECT id, sku, qty FROM transfers WHERE id=? AND status='reviewed'");
       const upd = db.prepare("UPDATE transfers SET status='reconciled', reconciled_at=? WHERE id=?");
@@ -141,15 +145,17 @@ export function transferRoutes(app: FastifyInstance): void {
         const row = rowStmt.get(Number(id)) as { id: number; sku: string; qty: number } | undefined;
         if (!row) continue;
         upd.run(now, row.id);
-        exported.push({ sku: row.sku, qty: row.qty, title: titleBySku.get(row.sku) ?? '' });
+        const meta = metaBySku.get(row.sku);
+        exported.push({ sku: row.sku, qalo_sku: meta?.qalo_sku ?? row.sku, qty: row.qty, title: meta?.title ?? '' });
       }
     });
     run();
     if (exported.length === 0) return reply.code(409).send({ error: 'nothing to export — select reviewed requests' });
     bumpRevision();
 
-    const csv = toCsv([['Merchant SKU', 'Quantity'], ...exported.map(l => [l.sku, l.qty])]);
-    const detailed = toCsv([['Merchant SKU', 'Product Name', 'Quantity'], ...exported.map(l => [l.sku, l.title, l.qty])]);
+    // The warehouse team picks by QALO SKU; the Amazon shipment plan needs the Amazon (Merchant) SKU.
+    const csv = toCsv([['QALO SKU', 'Amazon SKU', 'Quantity'], ...exported.map(l => [l.qalo_sku, l.sku, l.qty])]);
+    const detailed = toCsv([['QALO SKU', 'Amazon SKU', 'Product Name', 'Quantity'], ...exported.map(l => [l.qalo_sku, l.sku, l.title, l.qty])]);
     const filename = `transfer-request-${today()}.csv`;
     writeFileSync(join(DATA_DIR, 'exports', filename), detailed);
 

@@ -25,6 +25,18 @@ export function Imports({ refresh }: { refresh: () => void }) {
   const [brResult, setBrResult] = useState<any | null>(null);
   const [keep, setKeep] = useState<{ entries: any[]; count: number; kept_skus: number; ignored_skus: number } | null>(null);
   const [keepText, setKeepText] = useState('');
+  const [mapOver, setMapOver] = useState(false);
+  const [mapResult, setMapResult] = useState<any | null>(null);
+
+  async function importSkuMap(file: File) {
+    setBusy(true); setMapResult(null);
+    try {
+      const res = await api.upload<any>('/api/sku-map/import', file);
+      setMapResult(res);
+      toast(`SKU map imported — ${res.rows_in_file} products (${res.matched_to_catalog} matched, ${res.amazon_differs_from_qalo} with a different Amazon SKU).`);
+      refresh();
+    } catch (err: any) { toast(`SKU map import failed: ${err.message}`); } finally { setBusy(false); }
+  }
 
   const loadKeep = () => api.get<any>('/api/keep-list').then(setKeep).catch(() => {});
   useEffect(() => { loadKeep(); }, []);
@@ -201,6 +213,33 @@ export function Imports({ refresh }: { refresh: () => void }) {
         {brResult && (
           <div className="card" style={{ marginTop: 10, padding: '10px 14px', fontSize: 12.5 }}>
             <b>{brResult.matched}</b> tracked ASINs matched ({brResult.with_sales} with sales) from the <span className="mono">{brResult.units_column}</span> column · {brResult.window_days}-day window. This now drives velocity for matched SKUs.
+          </div>
+        )}
+      </div>
+
+      <div className="import-block">
+        <h2 style={{ marginTop: 4 }}>4 · SKU Mapping <span style={{ fontSize: 13, fontWeight: 400, color: 'var(--muted)' }}>— QALO SKU ↔ Amazon SKU ↔ ASIN</span></h2>
+        <div style={{ fontSize: 12, color: 'var(--muted)', margin: '-4px 0 10px', maxWidth: '86ch' }}>
+          The master list that ties your three identifiers together: your internal <b>QALO SKU</b>, the <b>Amazon SKU</b> (the listing inventory is sent to), and the <b>ASIN</b>. It lets the tool match your NetSuite warehouse (keyed by QALO SKU) to the right Amazon listing, and show the QALO SKU everywhere your team looks. Upload the CSV with columns <span className="mono">Amazon SKU, Child ASIN, QALO SKU</span>. Re-upload whenever the list changes.
+        </div>
+        <div
+          className={`dropzone${mapOver ? ' over' : ''}`}
+          onDragOver={e => { e.preventDefault(); setMapOver(true); }}
+          onDragLeave={() => setMapOver(false)}
+          onDrop={e => { e.preventDefault(); setMapOver(false); const f = e.dataTransfer.files[0]; if (f) importSkuMap(f); }}
+          onClick={() => {
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = '.csv,.txt';
+            input.onchange = () => { if (input.files?.[0]) importSkuMap(input.files[0]); };
+            input.click();
+          }}
+        >
+          {busy ? 'Working…' : <><b>Drop your SKU mapping</b> (Amazon SKU, Child ASIN, QALO SKU .csv)</>}
+        </div>
+        {mapResult && (
+          <div className="card" style={{ marginTop: 10, padding: '10px 14px', fontSize: 12.5 }}>
+            <b>{mapResult.rows_in_file}</b> products mapped · <b>{mapResult.matched_to_catalog}</b> matched to your FBA catalog · <b>{mapResult.amazon_differs_from_qalo}</b> have an Amazon SKU that differs from the QALO SKU{mapResult.skipped ? ` · ${mapResult.skipped} blank rows skipped` : ''}.
           </div>
         )}
       </div>

@@ -147,7 +147,10 @@ export function AllSkus({ data, refresh, openSku, initialStatus, initialFlag }: 
                         })} />
                     </td>
                     <td>
-                      <span className="sku-code">{r.sku}</span>
+                      <span className="sku-code">{r.qalo_sku ?? r.sku}</span>
+                      {r.qalo_sku && r.qalo_sku !== r.sku && (
+                        <span className="mono" style={{ fontSize: 10.5, color: 'var(--muted)', marginLeft: 5 }}>Amazon: {r.sku}</span>
+                      )}
                       <div className="cell-title" style={{ maxWidth: 190 }}>{r.title}</div>
                     </td>
                     <td><StatusBadge status={r.status} /></td>

@@ -119,6 +119,19 @@ export function assembleEngineInput(db: Database.Database, overrideTemplateId?: 
     parse_flags: r.flags ? JSON.parse(r.flags) : [],
   }));
 
+  // Master identity map (QALO SKU ↔ Amazon SKU ↔ ASIN). The catalog/engine key by the Amazon
+  // SKU (what the FBA export uses); the map supplies the QALO SKU (team-facing) and the
+  // authoritative ASIN, and lets us translate the NetSuite warehouse (keyed by QALO SKU).
+  const mapRows = db.prepare('SELECT qalo_sku, amazon_sku, asin FROM sku_map').all() as
+    { qalo_sku: string; amazon_sku: string | null; asin: string | null }[];
+  const byAmazon = new Map<string, { qalo_sku: string; asin: string | null }>();
+  const qaloToAmazon = new Map<string, string>();
+  for (const m of mapRows) {
+    if (m.amazon_sku) { byAmazon.set(m.amazon_sku, { qalo_sku: m.qalo_sku, asin: m.asin }); qaloToAmazon.set(m.qalo_sku, m.amazon_sku); }
+  }
+  const qaloOf = (amazonSku: string) => byAmazon.get(amazonSku)?.qalo_sku ?? amazonSku;
+  const asinOf = (amazonSku: string, fallback: string | null) => byAmazon.get(amazonSku)?.asin ?? fallback;
+
   const skuRows = db.prepare('SELECT * FROM skus').all() as any[];
   const skuSettings: Record<string, SkuSettings> = {};
   for (const r of skuRows) {
@@ -127,6 +140,8 @@ export function assembleEngineInput(db: Database.Database, overrideTemplateId?: 
     skuSettings[r.sku] = {
       classification: r.classification,
       fulfillment_channel: r.fulfillment_channel === 'fbm' ? 'fbm' : 'fba',
+      qalo_sku: qaloOf(r.sku),
+      asin: asinOf(r.sku, r.asin ?? null),
       title: r.title ?? undefined,
       case_pack: r.case_pack,
       moq: r.moq,
@@ -152,7 +167,8 @@ export function assembleEngineInput(db: Database.Database, overrideTemplateId?: 
     // Only FBA SKUs are demand-attribution targets. An FBM SKU's sales fold onto the FBA SKU
     // of the same ASIN, so FBM demand is planned once (on the FBA SKU) and the FBM SKU itself
     // is never sized for a transfer.
-    skuRows.filter(r => r.asin && r.fulfillment_channel !== 'fbm').map(r => ({ sku: r.sku, asin: String(r.asin) })),
+    skuRows.filter(r => asinOf(r.sku, r.asin ?? null) && r.fulfillment_channel !== 'fbm')
+      .map(r => ({ sku: r.sku, asin: String(asinOf(r.sku, r.asin ?? null)) })),
   );
 
   // Warehouse on-hand comes straight from the latest NetSuite import — the source of truth.
@@ -160,16 +176,23 @@ export function assembleEngineInput(db: Database.Database, overrideTemplateId?: 
   // NetSuite already decrements on-hand AND Amazon reports the units as inbound, so any
   // tool-side netting here would double-count. In-transit-to-FBA therefore comes entirely
   // from Amazon's inbound fields (see computePositions) — never from tool transfers.
+  // NetSuite is keyed by the QALO SKU; translate each row to the Amazon SKU the engine uses so
+  // warehouse stock lands on the right FBA listing (fixes the ~33 products whose Amazon SKU
+  // differs from the QALO SKU). SKUs with no map entry pass through unchanged (QALO == Amazon).
   const whRows = db.prepare('SELECT sku, qty_on_hand FROM warehouse_inventory').all() as any[];
   const warehouse: Record<string, number> = {};
-  for (const r of whRows) warehouse[r.sku] = r.qty_on_hand;
+  for (const r of whRows) {
+    const amazon = qaloToAmazon.get(r.sku) ?? r.sku;
+    warehouse[amazon] = (warehouse[amazon] ?? 0) + r.qty_on_hand;
+  }
   const inTransitToFba: Record<string, number> = {};
 
   const openPoLines = (db.prepare(`SELECT pl.sku, pl.qty_ordered - pl.qty_received AS qty_outstanding,
       po.expected_arrival, po.po_number
     FROM po_lines pl JOIN purchase_orders po ON po.id = pl.po_id
     WHERE po.status IN ('ordered','in_transit') AND pl.qty_ordered > pl.qty_received`).all() as any[])
-    .map(r => ({ sku: r.sku, qty_outstanding: r.qty_outstanding, expected_arrival: r.expected_arrival, po_number: r.po_number }));
+    // PO lines may be entered with the QALO SKU; translate to the Amazon SKU for consistency.
+    .map(r => ({ sku: qaloToAmazon.get(r.sku) ?? r.sku, qty_outstanding: r.qty_outstanding, expected_arrival: r.expected_arrival, po_number: r.po_number }));
 
   const activeId = overrideTemplateId ?? Number(getSetting(db, 'active_template_id') ?? 1);
   const active = templateParamsById(db, activeId);

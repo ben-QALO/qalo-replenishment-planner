@@ -188,6 +188,8 @@ export function computeRecommendations(input: EngineInput, today: string): Engin
 
     results.push({
       sku,
+      qalo_sku: settings?.qalo_sku ?? sku,
+      asin: settings?.asin ?? null,
       title: line?.title ?? settings?.title ?? '',
       classification,
       fulfillment_channel: isFbm ? 'fbm' : 'fba',

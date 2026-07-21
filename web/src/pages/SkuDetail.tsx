@@ -92,7 +92,10 @@ export function SkuDetail({ sku, today, templates, refresh }: {
     <div>
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
         <div style={{ flex: 1 }}>
-          <div className="sku-code" style={{ fontSize: 17 }}>{sku}</div>
+          <div className="sku-code" style={{ fontSize: 17 }}>{r?.qalo_sku ?? sku}</div>
+          <div className="mono" style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 2 }}>
+            {r?.qalo_sku && r.qalo_sku !== sku ? `Amazon SKU: ${sku}` : 'Amazon SKU: ' + sku}{(r?.asin ?? detail.settings?.asin) ? ` · ASIN: ${r?.asin ?? detail.settings?.asin}` : ''}
+          </div>
           <div style={{ color: 'var(--muted)', fontSize: 12.5, marginTop: 2, maxWidth: 460 }}>{r?.title ?? detail.settings?.title}</div>
         </div>
         {r && <StatusBadge status={r.status} />}

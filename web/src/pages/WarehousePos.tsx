@@ -189,7 +189,13 @@ function Transfers({ data, refresh }: { data: SkusResponse; refresh: () => void 
       style={{ color: short ? 'var(--stockout)' : undefined, fontWeight: short ? 700 : undefined }}>{fmtInt(wh)}{short ? ' ⚠' : ''}</span>;
   };
   const Product = ({ t }: { t: any }) => (
-    <><span className="sku-code">{t.sku}</span><div className="cell-title" style={{ maxWidth: 300 }}>{t.title}</div></>
+    <>
+      <span className="sku-code">{t.qalo_sku ?? t.sku}</span>
+      {t.qalo_sku && t.qalo_sku !== t.sku && (
+        <span className="mono" style={{ fontSize: 11, color: 'var(--muted)', marginLeft: 6 }}>Amazon: {t.sku}</span>
+      )}
+      <div className="cell-title" style={{ maxWidth: 300 }}>{t.title}</div>
+    </>
   );
 
   // Shipment header row (a full-width cell inside a per-batch <tbody>).
@@ -357,7 +363,7 @@ function Transfers({ data, refresh }: { data: SkusResponse; refresh: () => void 
               {closed.slice(0, 60).map(t => (
                 <tr key={t.id}>
                   <td style={{ fontSize: 11.5, color: 'var(--muted)' }}>{t.batch_name ?? '—'}</td>
-                  <td className="sku-code">{t.sku}</td>
+                  <td className="sku-code">{t.qalo_sku ?? t.sku}</td>
                   <td className="num">{fmtInt(t.qty)}</td>
                   <td className="num">{t.requested_qty != null && t.requested_qty !== t.qty ? <span className="mono" style={{ fontSize: 11, color: 'var(--muted)' }}>{fmtInt(t.requested_qty)}</span> : <span style={{ color: 'var(--muted)' }}>—</span>}</td>
                   <td className="mono" style={{ fontSize: 11.5 }}>{t.reconciled_at?.slice(0, 10) ?? '—'}</td>

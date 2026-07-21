@@ -46,6 +46,10 @@ export interface SkuSettings {
   classification: Classification;
   /** 'fba' (ship warehouse stock to Amazon) or 'fbm' (merchant-fulfilled — never ship to FBA). */
   fulfillment_channel?: 'fba' | 'fbm';
+  /** QALO internal SKU (team-facing). Falls back to the Amazon SKU when unmapped. */
+  qalo_sku?: string;
+  /** Authoritative ASIN from the SKU map (falls back to the catalog's ASIN). */
+  asin?: string | null;
   title?: string;
   case_pack?: number | null;
   moq?: number | null;
@@ -124,7 +128,9 @@ export type VelocitySource = 'manual' | 'business_report' | 'report' | 'none';
 export type VelocityConfidence = 'high' | 'medium' | 'low' | 'none';
 
 export interface SkuResult {
-  sku: string;
+  sku: string;              // Amazon SKU (the listing inventory is sent to; the catalog key)
+  qalo_sku: string;         // QALO internal SKU (team-facing); falls back to the Amazon SKU
+  asin: string | null;      // authoritative ASIN from the map
   title: string;
   classification: Classification;
   fulfillment_channel: 'fba' | 'fbm';
