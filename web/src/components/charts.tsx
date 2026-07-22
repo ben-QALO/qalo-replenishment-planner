@@ -51,6 +51,26 @@ const LAYERS = [
   { key: 'onOrder', label: 'On order from China', color: '#7B78F9', hint: 'placed, still in production or transit' },
 ] as const;
 
+// Which lane each event lands on (the lane whose rise it explains), and — for the three
+// events that MOVE existing units toward the customer — which lane those units came from.
+// po_placed has no source: it puts brand-new units into the pipeline.
+const EV_LANE: Record<PlanEvent['kind'], number> = { transfer_arrives: 0, ship: 1, po_arrives: 2, po_placed: 3 };
+const FLOW: Partial<Record<PlanEvent['kind'], { from: number; to: number }>> = {
+  po_arrives: { from: 3, to: 2 },        // China order lands in the warehouse
+  ship: { from: 2, to: 1 },              // warehouse stock leaves for Amazon
+  transfer_arrives: { from: 1, to: 0 },  // that shipment becomes sellable at Amazon
+};
+/** One short, glanceable phrase per event — no sentences. */
+function evLabel(e: PlanEvent): string {
+  const q = e.qty.toLocaleString('en-US');
+  switch (e.kind) {
+    case 'po_placed': return `order ${q}`;
+    case 'po_arrives': return `+${q} from China`;
+    case 'ship': return `${q} → Amazon`;
+    case 'transfer_arrives': return `+${q} sellable`;
+  }
+}
+
 /**
  * The plan played forward as four independent lanes — how the units in each location rise
  * and fall over the next six months if you follow the recommendations. Un-stacked on
@@ -164,6 +184,45 @@ export function PlanChart({ r, today, plan }: { r: SkuResult; today: string; pla
           <line x1={x(hoverDay)} x2={x(hoverDay)} y1={padTop + headerH - 2} y2={H - padBottom}
             stroke="var(--ink)" strokeWidth="1" strokeOpacity="0.35" pointerEvents="none" />
         )}
+
+        {/* Flow connectors — a dashed thread tying a lane's drop to the rise it feeds, so the
+            SAME units are visibly moving one step closer to the customer (China→warehouse→
+            heading→Amazon). Brightens near the hovered day. */}
+        {plan.events.map((e, i) => {
+          const f = FLOW[e.kind];
+          if (!f || !S[e.day]) return null;
+          const near = hoverDay !== null && Math.abs(e.day - hoverDay) <= 3;
+          const y1 = yInLane(f.from, val(S[e.day], LAYERS[f.from].key));
+          const y2 = yInLane(f.to, val(S[e.day], LAYERS[f.to].key));
+          return (
+            <line key={`fl${i}`} x1={x(e.day)} x2={x(e.day)} y1={y1} y2={y2}
+              stroke={LAYERS[f.to].color} strokeWidth={near ? 1.6 : 1}
+              strokeDasharray="3 3" strokeOpacity={near ? 0.95 : 0.4} pointerEvents="none" />
+          );
+        })}
+
+        {/* Event markers — a diamond on the lane each event explains. The reason (qty + what
+            happened) appears only for events near the hovered day, so it never clutters. */}
+        {plan.events.map((e, i) => {
+          const lane = EV_LANE[e.kind];
+          if (lane === undefined || !S[e.day]) return null;
+          const cx = x(e.day), cy = yInLane(lane, val(S[e.day], LAYERS[lane].key)), r = 4;
+          const c = LAYERS[lane].color;
+          const near = hoverDay !== null && Math.abs(e.day - hoverDay) <= 3;
+          return (
+            <g key={`ev${i}`} pointerEvents="none">
+              <path d={`M${cx},${cy - r} L${cx + r},${cy} L${cx},${cy + r} L${cx - r},${cy} Z`}
+                fill={c} stroke="var(--surface)" strokeWidth="1.3" />
+              {near && (
+                // Reason sits BELOW the diamond so it never collides with the lane's
+                // running-level label (which sits above the hover dot).
+                <text x={cx} y={cy + r + 12} textAnchor="middle" fontSize="9.5" fontWeight="700"
+                  fill={c} fontFamily="var(--mono)" stroke="var(--surface)" strokeWidth="2.5"
+                  paintOrder="stroke">{evLabel(e)}</text>
+              )}
+            </g>
+          );
+        })}
         {/* x axis: faint month ticks (endpoints are labelled below the chart) */}
         {ticks.map(d => (
           <text key={d} x={x(d)} y={H - padBottom + 18} textAnchor="middle" fontSize="9.5" fill="var(--faint)" fontFamily="var(--mono)">
@@ -171,6 +230,19 @@ export function PlanChart({ r, today, plan }: { r: SkuResult; today: string; pla
           </text>
         ))}
       </svg>
+
+      {/* Legend for the new language: diamonds = events, dashed thread = same units moving */}
+      <div style={{ display: 'flex', gap: 20, justifyContent: 'center', flexWrap: 'wrap', fontSize: 11, color: 'var(--muted)', margin: '10px 0 2px' }}>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+          <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M6,1 L11,6 L6,11 L1,6 Z" fill="var(--ink-2)" /></svg>
+          an event — placed, shipped, or arrived
+        </span>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+          <svg width="20" height="12" viewBox="0 0 20 12" aria-hidden="true"><line x1="10" y1="1" x2="10" y2="11" stroke="var(--ink-2)" strokeWidth="1.4" strokeDasharray="3 3" /></svg>
+          the same units moving toward Amazon
+        </span>
+        <span style={{ opacity: 0.8 }}>hover a day for the numbers &amp; reason</span>
+      </div>
 
       {/* Endpoint framing, like the sleep chart's In bed / Awake */}
       <div className="plan-ends">
