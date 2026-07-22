@@ -203,6 +203,10 @@ export interface PlanEvent {
   day: number;
   kind: 'ship' | 'transfer_arrives' | 'po_placed' | 'po_arrives';
   qty: number;
+  /** For ARRIVAL events only: the day the order/shipment that's landing was initiated —
+   *  i.e. `day − lead time`. Negative means it was placed before today (an order already in
+   *  flight). Lets the chart trace a warehouse/FBA rise back to its true cause in time. */
+  fromDay?: number;
 }
 
 export interface PlanProjection {
@@ -225,7 +229,7 @@ export function projectPlan(
   fbaAvailable: number,
   fbaComing: number,
   warehouseOnHand: number,
-  openPoArrivals: { day: number; qty: number }[],
+  openPoArrivals: { day: number; qty: number; placedDay?: number }[],
   t: TemplateParams,
   settings: SkuSettings | undefined,
   horizonDays: number,
@@ -240,20 +244,22 @@ export function projectPlan(
   const events: PlanEvent[] = [];
   let fba = fbaAvailable, wh = warehouseOnHand;
   let comingLeft = fbaComing;                       // in-flight units, land mid-leg
-  let transfers: { arrive: number; qty: number }[] = [];
-  let pos: { arrive: number; qty: number }[] = openPoArrivals
+  // `placed` = the day this shipment/order was initiated, so an arrival can name its cause.
+  let transfers: { arrive: number; qty: number; placed: number }[] = [];
+  let pos: { arrive: number; qty: number; placed: number }[] = openPoArrivals
     .filter(a => a.qty > 0)
-    .map(a => ({ arrive: Math.max(0, a.day), qty: a.qty }));
+    .map(a => ({ arrive: Math.max(0, a.day), qty: a.qty, placed: a.placedDay ?? Math.max(0, a.day) - lead }));
 
   for (let d = 0; d <= horizonDays; d++) {
-    // Arrivals land at the start of the day.
-    if (d === comingDay && comingLeft > 0) { fba += comingLeft; events.push({ day: d, kind: 'transfer_arrives', qty: comingLeft }); comingLeft = 0; }
+    // Arrivals land at the start of the day. `fromDay` traces each one back to when its
+    // order/shipment left — for the in-flight units, one ship-leg before they land.
+    if (d === comingDay && comingLeft > 0) { fba += comingLeft; events.push({ day: d, kind: 'transfer_arrives', qty: comingLeft, fromDay: d - t.fba_ship_checkin_days }); comingLeft = 0; }
     transfers = transfers.filter(x => {
-      if (x.arrive === d) { fba += x.qty; events.push({ day: d, kind: 'transfer_arrives', qty: x.qty }); return false; }
+      if (x.arrive === d) { fba += x.qty; events.push({ day: d, kind: 'transfer_arrives', qty: x.qty, fromDay: x.placed }); return false; }
       return true;
     });
     pos = pos.filter(x => {
-      if (x.arrive <= d) { wh += x.qty; events.push({ day: d, kind: 'po_arrives', qty: x.qty }); return false; }
+      if (x.arrive <= d) { wh += x.qty; events.push({ day: d, kind: 'po_arrives', qty: x.qty, fromDay: x.placed }); return false; }
       return true;
     });
 
@@ -270,7 +276,7 @@ export function projectPlan(
         const rec = recommendTransfer(velocity, fba, inTransit, wh, t, settings);
         if (rec.recommended_ship_qty > 0) {
           wh -= rec.recommended_ship_qty;
-          transfers.push({ arrive: d + t.fba_ship_checkin_days, qty: rec.recommended_ship_qty });
+          transfers.push({ arrive: d + t.fba_ship_checkin_days, qty: rec.recommended_ship_qty, placed: d });
           events.push({ day: d, kind: 'ship', qty: rec.recommended_ship_qty });
         }
       }
@@ -282,7 +288,7 @@ export function projectPlan(
       const openPo2 = pos.reduce((s, x) => s + x.qty, 0);
       const rec = recommendPo(velocity, fba + inTransit2 + wh + openPo2, fba + inTransit2, t, settings, '2026-01-01');
       if (rec.recommended_po_qty > 0) {
-        pos.push({ arrive: d + lead, qty: rec.recommended_po_qty });
+        pos.push({ arrive: d + lead, qty: rec.recommended_po_qty, placed: d });
         events.push({ day: d, kind: 'po_placed', qty: rec.recommended_po_qty });
       }
     }

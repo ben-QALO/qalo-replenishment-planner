@@ -51,21 +51,22 @@ const LAYERS = [
   { key: 'onOrder', label: 'On order from China', color: '#7B78F9', hint: 'placed, still in production or transit' },
 ] as const;
 
-// Which lane each event lands on (the lane whose rise it explains), and — for the three
-// events that MOVE existing units toward the customer — which lane those units came from.
-// po_placed has no source: it puts brand-new units into the pipeline.
+// Which lane each event lands on (the lane whose rise/fall it explains).
 const EV_LANE: Record<PlanEvent['kind'], number> = { transfer_arrives: 0, ship: 1, po_arrives: 2, po_placed: 3 };
-const FLOW: Partial<Record<PlanEvent['kind'], { from: number; to: number }>> = {
-  po_arrives: { from: 3, to: 2 },        // China order lands in the warehouse
-  ship: { from: 2, to: 1 },              // warehouse stock leaves for Amazon
-  transfer_arrives: { from: 1, to: 0 },  // that shipment becomes sellable at Amazon
+
+// The two ARRIVAL events carry a `fromDay` — when their order/shipment left. A causal thread
+// is drawn from that origin lane at that time to the lane that rises now, so a warehouse or
+// FBA jump traces backward in time to the order that caused it (not straight down to today).
+const THREAD: Partial<Record<PlanEvent['kind'], { origin: number; dest: number }>> = {
+  po_arrives: { origin: 3, dest: 2 },       // an order placed months ago lands in the warehouse
+  transfer_arrives: { origin: 2, dest: 0 }, // a shipment sent weeks ago becomes sellable at Amazon
 };
 /** One short, glanceable phrase per event — no sentences. */
 function evLabel(e: PlanEvent): string {
   const q = e.qty.toLocaleString('en-US');
   switch (e.kind) {
-    case 'po_placed': return `order ${q}`;
-    case 'po_arrives': return `+${q} from China`;
+    case 'po_placed': return `ordered ${q} from China`;
+    case 'po_arrives': return `+${q} arrived`;
     case 'ship': return `${q} → Amazon`;
     case 'transfer_arrives': return `+${q} sellable`;
   }
@@ -185,19 +186,33 @@ export function PlanChart({ r, today, plan }: { r: SkuResult; today: string; pla
             stroke="var(--ink)" strokeWidth="1" strokeOpacity="0.35" pointerEvents="none" />
         )}
 
-        {/* Flow connectors — a dashed thread tying a lane's drop to the rise it feeds, so the
-            SAME units are visibly moving one step closer to the customer (China→warehouse→
-            heading→Amazon). Brightens near the hovered day. */}
-        {plan.events.map((e, i) => {
-          const f = FLOW[e.kind];
-          if (!f || !S[e.day]) return null;
-          const near = hoverDay !== null && Math.abs(e.day - hoverDay) <= 3;
-          const y1 = yInLane(f.from, val(S[e.day], LAYERS[f.from].key));
-          const y2 = yInLane(f.to, val(S[e.day], LAYERS[f.to].key));
+        {/* Causal threads — the fix for "why did this jump?". On hover, an arrival's rise is
+            joined by a curved thread BACK IN TIME to when its order/shipment left: a warehouse
+            spike arcs back to the China order placed months ago; an Amazon refill arcs back to
+            the shipment sent weeks ago. Left edge = it was already in flight before today. */}
+        {hoverDay !== null && plan.events.map((e, i) => {
+          const th = THREAD[e.kind];
+          if (!th || e.fromDay === undefined || !S[e.day]) return null;
+          const fromClamp = Math.max(0, e.fromDay);
+          const near = Math.abs(e.day - hoverDay) <= 3 || Math.abs(fromClamp - hoverDay) <= 3;
+          if (!near) return null;
+          const ox = x(fromClamp), oy = yInLane(th.origin, val(S[fromClamp], LAYERS[th.origin].key));
+          const dx = x(e.day), dy = yInLane(th.dest, val(S[e.day], LAYERS[th.dest].key));
+          const mx = (ox + dx) / 2;
+          const c = LAYERS[th.dest].color;
+          const verb = e.kind === 'po_arrives' ? 'ordered' : 'shipped';
+          const preHistory = e.fromDay < 0;
           return (
-            <line key={`fl${i}`} x1={x(e.day)} x2={x(e.day)} y1={y1} y2={y2}
-              stroke={LAYERS[f.to].color} strokeWidth={near ? 1.6 : 1}
-              strokeDasharray="3 3" strokeOpacity={near ? 0.95 : 0.4} pointerEvents="none" />
+            <g key={`th${i}`} pointerEvents="none">
+              <path d={`M${ox},${oy} C${mx},${oy} ${mx},${dy} ${dx},${dy}`} fill="none"
+                stroke={c} strokeWidth="1.8" strokeDasharray="4 3" strokeOpacity="0.95" />
+              <circle cx={ox} cy={oy} r={3} fill="none" stroke={c} strokeWidth="1.5" />
+              <text x={preHistory ? ox + 5 : ox} y={oy - 8} textAnchor={preHistory ? 'start' : 'middle'}
+                fontSize="9.5" fontWeight="700" fill={c} fontFamily="var(--mono)"
+                stroke="var(--surface)" strokeWidth="2.5" paintOrder="stroke">
+                {preHistory ? '« ' : ''}{verb} {fmtDate(addDays(today, e.fromDay))}
+              </text>
+            </g>
           );
         })}
 
@@ -231,17 +246,16 @@ export function PlanChart({ r, today, plan }: { r: SkuResult; today: string; pla
         ))}
       </svg>
 
-      {/* Legend for the new language: diamonds = events, dashed thread = same units moving */}
+      {/* Legend for the new language: diamonds = events, arced thread = trace a rise to its cause */}
       <div style={{ display: 'flex', gap: 20, justifyContent: 'center', flexWrap: 'wrap', fontSize: 11, color: 'var(--muted)', margin: '10px 0 2px' }}>
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
           <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M6,1 L11,6 L6,11 L1,6 Z" fill="var(--ink-2)" /></svg>
           an event — placed, shipped, or arrived
         </span>
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-          <svg width="20" height="12" viewBox="0 0 20 12" aria-hidden="true"><line x1="10" y1="1" x2="10" y2="11" stroke="var(--ink-2)" strokeWidth="1.4" strokeDasharray="3 3" /></svg>
-          the same units moving toward Amazon
+          <svg width="22" height="12" viewBox="0 0 22 12" aria-hidden="true"><path d="M1,10 C7,10 15,2 21,2" fill="none" stroke="var(--ink-2)" strokeWidth="1.4" strokeDasharray="3 2" /></svg>
+          hover a jump to trace it back to the order that caused it
         </span>
-        <span style={{ opacity: 0.8 }}>hover a day for the numbers &amp; reason</span>
       </div>
 
       {/* Endpoint framing, like the sleep chart's In bed / Awake */}

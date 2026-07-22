@@ -70,7 +70,8 @@ export function skuRoutes(app: FastifyInstance): void {
       FROM snapshot_lines sl JOIN snapshots s ON s.id = sl.snapshot_id
       WHERE sl.sku = ? ORDER BY s.snapshot_date`).all(sku);
 
-    const poLines = db.prepare(`SELECT po.id, po.po_number, po.status, po.expected_arrival, pl.qty_ordered, pl.qty_received
+    const poLines = db.prepare(`SELECT po.id, po.po_number, po.status, po.expected_arrival,
+        po.ordered_date, po.created_at, pl.qty_ordered, pl.qty_received
       FROM po_lines pl JOIN purchase_orders po ON po.id = pl.po_id WHERE pl.sku = ? ORDER BY po.created_at DESC`).all(sku);
 
     const planLines = db.prepare(`SELECT p.id, p.kind, p.created_at, pl.qty_recommended, pl.qty_final
@@ -85,10 +86,15 @@ export function skuRoutes(app: FastifyInstance): void {
       const todayStr = today();
       const arrivals = (poLines as any[])
         .filter(p => (p.status === 'ordered' || p.status === 'in_transit') && p.qty_ordered > p.qty_received)
-        .map(p => ({
-          day: p.expected_arrival ? Math.max(0, diffDays(p.expected_arrival, todayStr)) : chinaLeadDays(result.template),
-          qty: p.qty_ordered - p.qty_received,
-        }));
+        .map(p => {
+          const placedAt = p.ordered_date || p.created_at?.slice(0, 10);
+          return {
+            day: p.expected_arrival ? Math.max(0, diffDays(p.expected_arrival, todayStr)) : chinaLeadDays(result.template),
+            qty: p.qty_ordered - p.qty_received,
+            // negative = placed before today, so the chart can point back to the real order date
+            placedDay: placedAt ? diffDays(placedAt, todayStr) : undefined,
+          };
+        });
       plan = projectPlan(
         result.velocity, result.fba_available, result.fba_coming, result.warehouse_on_hand,
         arrivals, result.template,
