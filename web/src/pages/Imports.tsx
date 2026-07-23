@@ -27,6 +27,9 @@ export function Imports({ refresh }: { refresh: () => void }) {
   const [keepText, setKeepText] = useState('');
   const [mapOver, setMapOver] = useState(false);
   const [mapResult, setMapResult] = useState<any | null>(null);
+  const [mapCov, setMapCov] = useState<any | null>(null);
+
+  const loadMapCov = () => api.get<any>('/api/sku-map').then(setMapCov).catch(() => {});
 
   async function importSkuMap(file: File) {
     setBusy(true); setMapResult(null);
@@ -34,12 +37,13 @@ export function Imports({ refresh }: { refresh: () => void }) {
       const res = await api.upload<any>('/api/sku-map/import', file);
       setMapResult(res);
       toast(`SKU map imported — ${res.rows_in_file} products (${res.matched_to_catalog} matched, ${res.amazon_differs_from_qalo} with a different Amazon SKU).`);
+      loadMapCov();
       refresh();
     } catch (err: any) { toast(`SKU map import failed: ${err.message}`); } finally { setBusy(false); }
   }
 
   const loadKeep = () => api.get<any>('/api/keep-list').then(setKeep).catch(() => {});
-  useEffect(() => { loadKeep(); }, []);
+  useEffect(() => { loadKeep(); loadMapCov(); }, []);
 
   async function importWarehouse(file: File) {
     setBusy(true); setWhResult(null);
@@ -240,6 +244,34 @@ export function Imports({ refresh }: { refresh: () => void }) {
         {mapResult && (
           <div className="card" style={{ marginTop: 10, padding: '10px 14px', fontSize: 12.5 }}>
             <b>{mapResult.rows_in_file}</b> products mapped · <b>{mapResult.matched_to_catalog}</b> matched to your FBA catalog · <b>{mapResult.amazon_differs_from_qalo}</b> have an Amazon SKU that differs from the QALO SKU{mapResult.skipped ? ` · ${mapResult.skipped} blank rows skipped` : ''}.
+          </div>
+        )}
+
+        {/* Coverage: every product must have both a QALO and an Amazon SKU. Warn loudly on any gap. */}
+        {mapCov && (
+          <div
+            className="card"
+            style={{
+              marginTop: 10, padding: '12px 14px', fontSize: 12.5,
+              borderLeft: `3px solid ${mapCov.unmapped_count > 0 ? 'var(--under, #ff5d5d)' : 'var(--c-health, #17bebb)'}`,
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <b style={{ color: mapCov.unmapped_count > 0 ? 'var(--under, #ff5d5d)' : 'var(--c-health, #17bebb)' }}>
+                {mapCov.unmapped_count > 0
+                  ? `⚠ ${mapCov.unmapped_count} of ${mapCov.catalog_total} products have no QALO↔Amazon mapping`
+                  : `✓ All ${mapCov.catalog_total} products are mapped`}
+              </b>
+              <span className="spacer" style={{ flex: 1 }} />
+              <a className="btn sm" href="/api/sku-map/export.csv" download>Export SKU list to validate</a>
+            </div>
+            {mapCov.unmapped_count > 0 && (
+              <div style={{ marginTop: 6, color: 'var(--muted)' }}>
+                Their warehouse stock and China orders can be wrong until mapped (the tool can't tie NetSuite stock to the listing).
+                {mapCov.stale_mappings > 0 && ` Also ${mapCov.stale_mappings} mapping row(s) point to an Amazon SKU not in the catalog.`}
+                {' '}Missing: <span className="mono">{mapCov.unmapped_sample.slice(0, 12).join(', ')}{mapCov.unmapped_count > 12 ? ' …' : ''}</span>
+              </div>
+            )}
           </div>
         )}
       </div>

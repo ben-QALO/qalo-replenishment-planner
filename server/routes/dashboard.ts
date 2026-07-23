@@ -27,13 +27,19 @@ function buildWorklist(db: Database.Database, output: ReturnType<typeof currentR
   // Replenishable SKUs with no velocity the tool can use.
   const noVelocity = (output?.results ?? []).filter(r => r.classification === 'replenishable' && r.velocity === null).length;
 
+  // Active products with no QALO↔Amazon mapping — warehouse stock and orders can't be trusted for
+  // these until they're mapped (the tool can't tie NetSuite stock to the Amazon listing).
+  const unmapped = (db.prepare(`SELECT COUNT(*) c FROM skus s LEFT JOIN sku_map m ON m.amazon_sku = s.sku
+    WHERE m.qalo_sku IS NULL AND s.classification IN ('replenishable','watch','unclassified')`).get() as any).c;
+
   return {
     transfers_to_review: toReview,
     transfers_to_export: toExport,
     pos_to_action: posToAction.length,
     new_products: unclassified,
     no_velocity: noVelocity,
-    total: toReview + toExport + posToAction.length + unclassified + noVelocity,
+    unmapped_skus: unmapped,
+    total: toReview + toExport + posToAction.length + unclassified + noVelocity + unmapped,
   };
 }
 

@@ -26,22 +26,41 @@ export function warehouseRoutes(app: FastifyInstance): void {
 
     const db = getDb();
     const known = new Set((db.prepare('SELECT sku FROM skus').all() as { sku: string }[]).map(r => r.sku));
+    // The NetSuite report is keyed by the QALO SKU; the catalog/engine key by the Amazon SKU.
+    // Translate each row through the QALO↔Amazon map so warehouse stock lands on the right Amazon
+    // listing (e.g. NetSuite "MBK09-O" → catalog "MBK09-O.s"). Rows whose SKU is already a catalog
+    // key pass through unchanged. Two QALO SKUs mapping to one Amazon SKU are summed, not overwritten.
+    const qaloToAmazon = new Map((db.prepare('SELECT qalo_sku, amazon_sku FROM sku_map WHERE amazon_sku IS NOT NULL')
+      .all() as { qalo_sku: string; amazon_sku: string }[]).map(r => [r.qalo_sku, r.amazon_sku] as const));
     const now = nowIso();
     const upsert = db.prepare(`INSERT INTO warehouse_inventory (sku, qty_on_hand, updated_at, updated_via)
       VALUES (?, ?, ?, 'csv')
       ON CONFLICT(sku) DO UPDATE SET qty_on_hand = excluded.qty_on_hand, updated_at = excluded.updated_at, updated_via = 'csv'`);
 
+    // Fold NetSuite rows onto their catalog (Amazon) SKU first so 1→many maps sum correctly.
+    const byCatalog = new Map<string, number>();
+    const skippedWithStock: { sku: string; qty: number }[] = [];
+    for (const row of parsed.rows) {
+      const catalogSku = qaloToAmazon.get(row.sku) ?? row.sku;
+      if (!known.has(catalogSku)) {
+        if (row.onHand > 0) skippedWithStock.push({ sku: row.sku, qty: row.onHand });
+        continue; // NetSuite item not in the Amazon catalog and no mapping to one
+      }
+      byCatalog.set(catalogSku, (byCatalog.get(catalogSku) ?? 0) + row.onHand);
+    }
+
     let matched = 0, withStock = 0;
     const run = db.transaction(() => {
-      for (const row of parsed.rows) {
-        if (!known.has(row.sku)) continue; // ignore non-Amazon NetSuite items
-        upsert.run(row.sku, row.onHand, now);
+      for (const [sku, qty] of byCatalog) {
+        upsert.run(sku, qty, now);
         matched++;
-        if (row.onHand > 0) withStock++;
+        if (qty > 0) withStock++;
       }
+      const warn = [`${matched} SKUs matched, ${withStock} with stock`];
+      if (skippedWithStock.length) warn.push(`${skippedWithStock.length} NetSuite SKUs had stock but no catalog match — SKU mapping gap`);
       db.prepare(`INSERT INTO import_log (kind, filename, imported_at, status, rows_total, rows_ok, new_skus, warnings)
         VALUES ('warehouse', ?, ?, 'committed', ?, ?, 0, ?)`)
-        .run(original, now, parsed.rows.length, matched, JSON.stringify([`${matched} SKUs matched, ${withStock} with stock`]));
+        .run(original, now, parsed.rows.length, matched, JSON.stringify(warn));
     });
     run();
     bumpRevision();
@@ -55,6 +74,8 @@ export function warehouseRoutes(app: FastifyInstance): void {
       rows_in_file: parsed.rows.length,
       matched, with_stock: withStock,
       qty_column: parsed.qtyColumnLabel,
+      skipped_with_stock: skippedWithStock.length,
+      skipped_with_stock_sample: skippedWithStock.sort((a, b) => b.qty - a.qty).slice(0, 20),
       tracked_missing_count: trackedMissing.length,
       tracked_missing_sample: trackedMissing.slice(0, 20),
     };

@@ -3,6 +3,10 @@ import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { getDb, bumpRevision, nowIso, DATA_DIR } from '../db/connection.ts';
 import { parseSkuMap } from '../import/sku-map.ts';
+import { toCsv } from '../export/csv.ts';
+
+// Coverage is measured over the products the tool actually plans for — not ignored/discontinued ones.
+const ACTIVE = "('replenishable','watch','unclassified')";
 
 export function skuMapRoutes(app: FastifyInstance): void {
   // Import the master QALO ↔ Amazon ↔ ASIN mapping (replaces the whole map each time).
@@ -54,11 +58,53 @@ export function skuMapRoutes(app: FastifyInstance): void {
     };
   });
 
-  // Freshness + coverage for the Imports page.
+  // Freshness + coverage for the Imports page. Coverage = active catalog SKUs that have a QALO SKU
+  // in the map. Unmapped products are the ones whose warehouse stock / orders can't be trusted.
   app.get('/api/sku-map', () => {
     const db = getDb();
     const meta = db.prepare('SELECT COUNT(*) AS n, MAX(updated_at) AS updated_at FROM sku_map').get() as any;
     const differ = (db.prepare('SELECT COUNT(*) AS n FROM sku_map WHERE amazon_sku IS NOT NULL AND amazon_sku <> qalo_sku').get() as any).n;
-    return { rows: meta.n ?? 0, updated_at: meta.updated_at ?? null, amazon_differs_from_qalo: differ };
+    const catalogTotal = (db.prepare(`SELECT COUNT(*) AS n FROM skus WHERE classification IN ${ACTIVE}`).get() as any).n;
+    const unmapped = (db.prepare(`SELECT s.sku FROM skus s LEFT JOIN sku_map m ON m.amazon_sku = s.sku
+      WHERE m.qalo_sku IS NULL AND s.classification IN ${ACTIVE} ORDER BY s.sku`).all() as { sku: string }[]).map(r => r.sku);
+    // Map rows that point at an Amazon SKU the catalog doesn't have (stale/typo'd mapping).
+    const stale = (db.prepare(`SELECT COUNT(*) AS n FROM sku_map m WHERE m.amazon_sku IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM skus s WHERE s.sku = m.amazon_sku)`).get() as any).n;
+    return {
+      rows: meta.n ?? 0, updated_at: meta.updated_at ?? null, amazon_differs_from_qalo: differ,
+      catalog_total: catalogTotal, mapped: catalogTotal - unmapped.length,
+      unmapped_count: unmapped.length, unmapped_sample: unmapped.slice(0, 50),
+      stale_mappings: stale,
+    };
+  });
+
+  // Validation export: every active product in the tool with its QALO SKU, Amazon SKU, ASIN,
+  // mapped status and current warehouse qty — so the team can audit and complete the mapping.
+  app.get('/api/sku-map/export.csv', (_req, reply) => {
+    const db = getDb();
+    const rows = db.prepare(`
+      SELECT s.sku AS amazon_sku, s.classification, s.title,
+             m.qalo_sku, COALESCE(m.asin, s.asin) AS asin,
+             COALESCE(w.qty_on_hand, 0) AS warehouse
+      FROM skus s
+      LEFT JOIN sku_map m ON m.amazon_sku = s.sku
+      LEFT JOIN warehouse_inventory w ON w.sku = s.sku
+      WHERE s.classification IN ${ACTIVE}
+      ORDER BY (m.qalo_sku IS NULL) DESC, s.sku`).all() as any[];
+    const out: unknown[][] = [['Amazon SKU', 'QALO SKU', 'ASIN', 'Mapped?', 'Warehouse On Hand', 'Classification', 'Title']];
+    for (const r of rows) {
+      out.push([r.amazon_sku, r.qalo_sku ?? '', r.asin ?? '',
+        r.qalo_sku ? 'yes' : 'NO — missing QALO SKU', r.warehouse, r.classification, r.title ?? '']);
+    }
+    // Stale map rows: an Amazon SKU in the mapping that the catalog doesn't have.
+    const orphans = db.prepare(`SELECT qalo_sku, amazon_sku, asin FROM sku_map m WHERE m.amazon_sku IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM skus s WHERE s.sku = m.amazon_sku) ORDER BY qalo_sku`).all() as any[];
+    for (const r of orphans) out.push([r.amazon_sku ?? '', r.qalo_sku, r.asin ?? '', 'STALE — Amazon SKU not in catalog', '', '', '']);
+
+    const csv = toCsv(out);
+    const filename = `sku-mapping-${nowIso().slice(0, 10)}.csv`;
+    reply.header('Content-Type', 'text/csv');
+    reply.header('Content-Disposition', `attachment; filename="${filename}"`);
+    return csv;
   });
 }

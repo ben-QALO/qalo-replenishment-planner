@@ -25,6 +25,15 @@ const ceilTo = (qty: number, m: number | null | undefined): number => {
   return (Math.ceil(qty / mult - 1e-9) * mult) || 0;   // `|| 0` normalizes -0 → 0
 };
 
+// Round to the NEAREST whole case (half up), not always up. Used for China POs so a need of 53
+// settles to one 50-case (not 100) while 75 still rounds up to 100 — avoids burying slow movers in
+// a spare case for being barely over a line. The MOQ floor still applies before this, so the result
+// is never below one case. Transfers keep ceilTo (ship a whole case, capped at 6-month cover).
+const roundTo = (qty: number, m: number | null | undefined): number => {
+  const mult = m && m > 1 ? m : 1;
+  return (Math.floor(qty / mult + 0.5) * mult) || 0;   // `|| 0` normalizes -0 → 0
+};
+
 export interface TransferRec {
   /** Units it would take to hit the FBA target when this shipment lands. */
   required: number;
@@ -129,7 +138,7 @@ export function recommendPo(
   const moq = settings?.moq ?? 0;
   if (qty > 0 && moq > 0 && qty < moq) { qty = moq; flags.push('MOQ_PADDED'); }
   const preRound = qty;
-  qty = ceilTo(qty, settings?.order_multiple ?? settings?.case_pack);
+  qty = roundTo(qty, settings?.order_multiple ?? settings?.case_pack);   // nearest case, not always up
   if (qty > 0 && qty - preRound > velocity * 30) flags.push('ROUNDING_HEAVY');
 
   // Dates. Deficit: place TODAY — every day of delay extends the gap at Amazon.

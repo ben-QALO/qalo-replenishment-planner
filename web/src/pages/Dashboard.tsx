@@ -226,6 +226,7 @@ export function Dashboard({ data, worklist, refresh, openSku, go }: {
     { n: wl.pos_to_action, label: 'POs to update', hint: 'draft to send, or overdue', hash: '#/warehouse?tab=pos', tone: 'var(--atrisk)' },
     { n: wl.new_products, label: 'new products to classify', hint: 'keep or ignore', hash: '#/skus?status=UNCLASSIFIED', tone: 'var(--atrisk)' },
     { n: wl.no_velocity, label: 'missing a sales rate', hint: 'set expected units sold per day', hash: '#/skus?flag=NO_VELOCITY', tone: 'var(--stockout)' },
+    { n: wl.unmapped_skus, label: 'missing a SKU mapping', hint: 'add the QALO↔Amazon SKU — warehouse stock & orders depend on it', hash: '#/imports', tone: 'var(--stockout)' },
   ].filter(i => i.n > 0) : [];
 
   const coverClass = (d: number | null) => d === null ? '' : d < 14 ? 'q-cover hot' : d < 30 ? 'q-cover warn' : 'q-cover';
