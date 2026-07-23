@@ -50,6 +50,10 @@ export interface SkuSettings {
   qalo_sku?: string;
   /** Authoritative ASIN from the SKU map (falls back to the catalog's ASIN). */
   asin?: string | null;
+  /** When this SKU is a duplicate Amazon listing of another SKU on the same ASIN, the primary
+   *  (mapped) SKU it was folded into. Set by assemble's ASIN-consolidation. The engine then
+   *  suspends this SKU (no transfer/PO of its own — the primary carries the whole product). */
+  consolidated_into?: string | null;
   title?: string;
   case_pack?: number | null;
   moq?: number | null;
@@ -186,6 +190,7 @@ export interface SkuResult {
   template_label: string;      // e.g. 'GLOBAL: Ocean – standard', 'SKU: Air – expedited', '+ overrides'
   template: TemplateParams;
   include_in_plans: boolean;   // only replenishable SKUs feed plan exports
+  consolidated_into?: string | null;  // primary SKU this duplicate-listing was folded into (ASIN consolidation)
 
   amazon_days_of_supply: number | null;
   amazon_min_inventory_level: number | null;

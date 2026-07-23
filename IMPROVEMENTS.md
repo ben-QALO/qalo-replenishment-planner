@@ -5,7 +5,48 @@ Newest issues at the top. Status: 🔴 not started · 🟡 in progress · 🟢 d
 
 ---
 
-## 3. 🟡 Rock-solid SKU mapping — coverage warning + validation export + warehouse fix  ·  BUILT LOCALLY, NOT DEPLOYED
+## 4. 🟢 ASIN consolidation — plan duplicate Amazon SKUs as one product  ·  BUILT + TESTED
+
+DONE (`assemble.ts` + `engine/index.ts` + `types.ts`): merchant SKUs sharing an ASIN plan as ONE
+unit. The MAPPED SKU is primary; each duplicate folds its demand (summed), warehouse and open POs
+onto it, FBA pools are summed but DEDUPED by identical position tuple (shared pool counted once),
+and the duplicate is suspended (`consolidated_into`, flag `CONSOLIDATED`, no order of its own).
+Coverage (`/api/sku-map`, dashboard) and the export are now ASIN-aware so consolidated SKUs aren't
+falsely flagged "missing mapping". Verified on live data: MHD11 velocity 5.53 (115+50) with FBA 388
+counted ONCE (not doubled); MBK08-O FBA summed 197 (separate pools); MQB09 consolidates onto mapped
+MQBQ09; unmapped-count 7 → 0; 108/108 tests pass. Original write-up below.
+
+
+**Idea (Benoit):** if an ASIN already has a mapped QALO SKU, any new Amazon SKU under that ASIN should
+auto-inherit the same QALO SKU — no manual re-upload every time Amazon spins up a variant listing.
+
+**Validated on prod (v14, 663 mappings):**
+- 8 ASINs have 2 catalog Amazon SKUs each (primary + variant: `.1` / `.s` / `NP` / `.missing1` /
+  re-created `Stickered.MSKU…`).
+- **0 ASINs map to more than one QALO SKU** → the inherit target is always unambiguous; rule is safe.
+- **All 7 currently-unmapped active SKUs share an ASIN with a mapped sibling** → this rule fixes 100%
+  of today's gap: MHD11.s→MHD11, MBK08-O.1→MBK08-O, MBK11-O.1→MBK11-O, MQB09.1→MQBQ09,
+  MQB14.1→MQBQ14, SMB09NP→SMB09, FBA18YPL9799.missing1→MSB11.
+
+**Design note:** `sku_map` is keyed by `qalo_sku` (one Amazon SKU per QALO SKU), so it can't hold a
+2nd Amazon SKU for the same QALO product. A *resolution rule* (catalog SKU inherits the QALO SKU of a
+mapped ASIN-sibling) is the cheap version — but see the finding below before shipping it.
+
+**FINDING (blocks the naive version):** for these shared-ASIN pairs, BOTH Amazon SKUs are often
+actively selling — they're not dead duplicates. Last-30d FBA sales: MHD11 117 + MHD11.s 50;
+MQBQ09 19 + MQB09.1 35 (the *unmapped* variant outsells the mapped one!); MBK08-O 59 + .1 3;
+MBK11-O 88 + .1 0; MSB11 40 + .missing1 10; SMB09 17 + NP 4. So the ASIN's real demand is SPLIT
+across two catalog rows and warehouse feeds only one. A label-only "inherit by ASIN" would turn the
+coverage warning green while leaving split demand + stranded warehouse unfixed → masks the problem.
+
+**Correct fix:** treat all Amazon SKUs under one ASIN as ONE planning unit — sum demand, share
+warehouse/inventory, plan once. Bigger engine change; build + test before deploying, do NOT rush.
+Interim safe option: change the warning to flag "duplicate Amazon SKUs under one ASIN" so dead ones
+can be set to `ignore` and the genuinely-split ones (MHD11, MQB09) handled consciously.
+
+---
+
+## 3. 🟡 Rock-solid SKU mapping — coverage warning + validation export + warehouse fix  ·  DEPLOYED (v11)
 
 Built + verified against a copy of live data (all 108 tests pass):
 - **Warehouse import fix** (`warehouse.ts`): NetSuite rows now translate QALO→Amazon via `sku_map`

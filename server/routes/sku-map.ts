@@ -65,8 +65,14 @@ export function skuMapRoutes(app: FastifyInstance): void {
     const meta = db.prepare('SELECT COUNT(*) AS n, MAX(updated_at) AS updated_at FROM sku_map').get() as any;
     const differ = (db.prepare('SELECT COUNT(*) AS n FROM sku_map WHERE amazon_sku IS NOT NULL AND amazon_sku <> qalo_sku').get() as any).n;
     const catalogTotal = (db.prepare(`SELECT COUNT(*) AS n FROM skus WHERE classification IN ${ACTIVE}`).get() as any).n;
-    const unmapped = (db.prepare(`SELECT s.sku FROM skus s LEFT JOIN sku_map m ON m.amazon_sku = s.sku
-      WHERE m.qalo_sku IS NULL AND s.classification IN ${ACTIVE} ORDER BY s.sku`).all() as { sku: string }[]).map(r => r.sku);
+    // A product is covered if the SKU is directly mapped OR its ASIN already has a mapping (a
+    // sibling SKU on the same ASIN is mapped → this one auto-consolidates into it). Only a SKU
+    // whose ASIN is entirely unknown to the map is a genuine gap.
+    const unmapped = (db.prepare(`SELECT s.sku FROM skus s
+      WHERE s.classification IN ${ACTIVE}
+        AND NOT EXISTS (SELECT 1 FROM sku_map m WHERE m.amazon_sku = s.sku)
+        AND NOT EXISTS (SELECT 1 FROM sku_map m WHERE m.asin = s.asin AND s.asin IS NOT NULL AND s.asin <> '')
+      ORDER BY s.sku`).all() as { sku: string }[]).map(r => r.sku);
     // Map rows that point at an Amazon SKU the catalog doesn't have (stale/typo'd mapping).
     const stale = (db.prepare(`SELECT COUNT(*) AS n FROM sku_map m WHERE m.amazon_sku IS NOT NULL
       AND NOT EXISTS (SELECT 1 FROM skus s WHERE s.sku = m.amazon_sku)`).get() as any).n;
@@ -84,17 +90,21 @@ export function skuMapRoutes(app: FastifyInstance): void {
     const db = getDb();
     const rows = db.prepare(`
       SELECT s.sku AS amazon_sku, s.classification, s.title,
-             m.qalo_sku, COALESCE(m.asin, s.asin) AS asin,
+             m.qalo_sku AS direct_qalo, COALESCE(m.asin, s.asin) AS asin,
+             (SELECT mm.qalo_sku FROM sku_map mm WHERE mm.asin = s.asin AND s.asin IS NOT NULL AND s.asin <> '' LIMIT 1) AS asin_qalo,
              COALESCE(w.qty_on_hand, 0) AS warehouse
       FROM skus s
       LEFT JOIN sku_map m ON m.amazon_sku = s.sku
       LEFT JOIN warehouse_inventory w ON w.sku = s.sku
       WHERE s.classification IN ${ACTIVE}
-      ORDER BY (m.qalo_sku IS NULL) DESC, s.sku`).all() as any[];
+      ORDER BY (m.qalo_sku IS NULL AND (SELECT 1 FROM sku_map mm WHERE mm.asin = s.asin) IS NULL) DESC, s.asin, s.sku`).all() as any[];
     const out: unknown[][] = [['Amazon SKU', 'QALO SKU', 'ASIN', 'Mapped?', 'Warehouse On Hand', 'Classification', 'Title']];
     for (const r of rows) {
-      out.push([r.amazon_sku, r.qalo_sku ?? '', r.asin ?? '',
-        r.qalo_sku ? 'yes' : 'NO — missing QALO SKU', r.warehouse, r.classification, r.title ?? '']);
+      const qalo = r.direct_qalo ?? r.asin_qalo ?? '';
+      const status = r.direct_qalo ? 'yes'
+        : r.asin_qalo ? `via ASIN → ${r.asin_qalo} (consolidated)`
+        : 'NO — missing QALO SKU';
+      out.push([r.amazon_sku, qalo, r.asin ?? '', status, r.warehouse, r.classification, r.title ?? '']);
     }
     // Stale map rows: an Amazon SKU in the mapping that the catalog doesn't have.
     const orphans = db.prepare(`SELECT qalo_sku, amazon_sku, asin FROM sku_map m WHERE m.amazon_sku IS NOT NULL

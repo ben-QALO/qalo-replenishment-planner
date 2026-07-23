@@ -194,6 +194,65 @@ export function assembleEngineInput(db: Database.Database, overrideTemplateId?: 
     // PO lines may be entered with the QALO SKU; translate to the Amazon SKU for consistency.
     .map(r => ({ sku: qaloToAmazon.get(r.sku) ?? r.sku, qty_outstanding: r.qty_outstanding, expected_arrival: r.expected_arrival, po_number: r.po_number }));
 
+  // ── ASIN consolidation ──────────────────────────────────────────────────────
+  // Amazon can carry several merchant SKUs on ONE ASIN (a re-listing, or a `.s`/`.1`/`NP`
+  // variant). They're the same physical product: sales split across the SKUs and FBA inventory
+  // is often a single shared pool reported once per SKU. Plan them as ONE unit — the MAPPED SKU
+  // is primary; each duplicate folds its demand, warehouse and open POs onto it, FBA pools are
+  // summed but DEDUPED (an identical position tuple = the same physical pool, counted once), and
+  // the duplicate is suspended (engine reads `consolidated_into`). Fixes both the split demand
+  // and the double-counted shared FBA pool that mis-ordered these products.
+  const directlyMapped = new Set(mapRows.filter(m => m.amazon_sku).map(m => m.amazon_sku as string));
+  const lineBySku = new Map(lines.map(l => [l.sku, l]));
+  const groupByAsin = new Map<string, string[]>();
+  for (const r of skuRows) {
+    if (r.classification !== 'replenishable' && r.classification !== 'watch') continue;
+    const asin = asinOf(r.sku, r.asin ?? null);
+    if (!asin) continue;
+    (groupByAsin.get(asin) ?? groupByAsin.set(asin, []).get(asin)!).push(r.sku);
+  }
+  const poolKey = (l: SnapshotLine) =>
+    `${l.available}|${l.reserved}|${l.inbound_working}|${l.inbound_shipped}|${l.inbound_received}`;
+  const consolidated: Record<string, string> = {};
+  for (const [, groupSkus] of groupByAsin) {
+    if (groupSkus.length < 2) continue;
+    const primary = groupSkus.find(s => directlyMapped.has(s)) ?? groupSkus[0];
+    const pLine = lineBySku.get(primary);
+    if (!pLine) continue;   // mapped primary absent from this snapshot → leave the group as-is (safe)
+    const seenPools = new Set<string>([poolKey(pLine)]);
+    for (const sib of groupSkus) {
+      if (sib === primary) continue;
+      const sd = externalDemand[sib];
+      if (sd) {   // demand: sum the sales streams onto the primary
+        const pd = externalDemand[primary];
+        externalDemand[primary] = { units: (pd?.units ?? 0) + sd.units, days: pd?.days ?? sd.days };
+        delete externalDemand[sib];
+      }
+      const sLine = lineBySku.get(sib);
+      if (sLine) {
+        const k = poolKey(sLine);
+        if (!seenPools.has(k)) {   // FBA: add only a DISTINCT physical pool (different tuple)
+          seenPools.add(k);
+          pLine.available += sLine.available;
+          pLine.reserved += sLine.reserved;
+          pLine.inbound_working += sLine.inbound_working;
+          pLine.inbound_shipped += sLine.inbound_shipped;
+          pLine.inbound_received += sLine.inbound_received;
+          pLine.unfulfillable = (pLine.unfulfillable ?? 0) + (sLine.unfulfillable ?? 0);
+        }
+        for (const w of ['units_shipped_t7', 'units_shipped_t30', 'units_shipped_t60', 'units_shipped_t90'] as const) {
+          if (sLine[w] != null) pLine[w] = (pLine[w] ?? 0) + (sLine[w] as number);   // separate sales streams → sum
+        }
+      }
+      if (warehouse[sib]) { warehouse[primary] = (warehouse[primary] ?? 0) + warehouse[sib]; delete warehouse[sib]; }
+      consolidated[sib] = primary;
+    }
+  }
+  for (const pl of openPoLines) { const into = consolidated[pl.sku]; if (into) pl.sku = into; }
+  for (const [sib, primary] of Object.entries(consolidated)) {
+    if (skuSettings[sib]) skuSettings[sib].consolidated_into = primary;
+  }
+
   const activeId = overrideTemplateId ?? Number(getSetting(db, 'active_template_id') ?? 1);
   const active = templateParamsById(db, activeId);
   if (!active) return null;

@@ -29,8 +29,11 @@ function buildWorklist(db: Database.Database, output: ReturnType<typeof currentR
 
   // Active products with no QALO↔Amazon mapping — warehouse stock and orders can't be trusted for
   // these until they're mapped (the tool can't tie NetSuite stock to the Amazon listing).
-  const unmapped = (db.prepare(`SELECT COUNT(*) c FROM skus s LEFT JOIN sku_map m ON m.amazon_sku = s.sku
-    WHERE m.qalo_sku IS NULL AND s.classification IN ('replenishable','watch','unclassified')`).get() as any).c;
+  // Covered = SKU directly mapped OR its ASIN already mapped (auto-consolidates into the sibling).
+  const unmapped = (db.prepare(`SELECT COUNT(*) c FROM skus s
+    WHERE s.classification IN ('replenishable','watch','unclassified')
+      AND NOT EXISTS (SELECT 1 FROM sku_map m WHERE m.amazon_sku = s.sku)
+      AND NOT EXISTS (SELECT 1 FROM sku_map m WHERE m.asin = s.asin AND s.asin IS NOT NULL AND s.asin <> '')`).get() as any).c;
 
   return {
     transfers_to_review: toReview,

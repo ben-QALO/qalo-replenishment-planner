@@ -89,7 +89,11 @@ export function computeRecommendations(input: EngineInput, today: string): Engin
     const sellingWhileMissing = missingFromImport && flags.includes('BUSINESS_REPORT')
       && vel.velocity !== null && vel.velocity > 0;
     const canPlan = !missingFromImport || sellingWhileMissing;
-    const planning = (classification === 'replenishable' || classification === 'watch') && canPlan;
+    // A SKU folded into its ASIN's primary (a duplicate Amazon listing) is suspended: the primary
+    // carries the product's whole demand + inventory, so this one never gets its own transfer/PO.
+    const consolidatedInto = settings?.consolidated_into ?? null;
+    if (consolidatedInto) flags.push('CONSOLIDATED');
+    const planning = (classification === 'replenishable' || classification === 'watch') && canPlan && !consolidatedInto;
 
     const fbaCover = daysOfCover(positions.fba_position, vel.velocity);
     const pipelineCover = daysOfCover(positions.total_pipeline, vel.velocity);
@@ -238,7 +242,8 @@ export function computeRecommendations(input: EngineInput, today: string): Engin
       daily_revenue: round2(dailyRevenue),
       template_label: label,
       template,
-      include_in_plans: classification === 'replenishable' && canPlan,
+      consolidated_into: consolidatedInto,
+      include_in_plans: classification === 'replenishable' && canPlan && !consolidatedInto,
       amazon_days_of_supply: line?.amazon_days_of_supply ?? null,
       amazon_min_inventory_level: line?.amazon_min_inventory_level ?? null,
     });
