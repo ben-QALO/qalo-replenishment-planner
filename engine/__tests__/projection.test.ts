@@ -51,19 +51,22 @@ test('transfer: prefer whole cases; ship up to 6 months for slow movers, never s
   assert.equal(lowSeller.recommended_ship_qty, 50);
 });
 
-test('transfer: 6-month cap trims an oversized case down to a partial pick', () => {
+test('transfer: too slow for FBA (one case > 6 months of cover) → ship nothing, keep it FBM', () => {
   const T = { ...QALO, fba_target_cover_days: 90 };
-  // Very slow mover with a huge case: v=0.3/day, FBA 15, case pack 200. A full case would be
-  // ~1.8 years of cover — cap to 6 months instead: floor(0.3×183 − 4.5) ≈ 50, a partial pick.
-  const r = recommendTransfer(0.3, 15, 0, 100_000, T, settings({ case_pack: 200 }));
-  assert.equal(r.recommended_ship_qty, 50);
-  assert.ok(r.recommended_ship_qty < 200, 'never buries months of cash in a trickle SKU');
+  // Trickle SKU: v=0.1/day, case pack 50 → one 50-case ≈ 500 days of cover. Even with FBA nearly
+  // empty (2 units — which would be a "rescue" for a normal mover), it ships 0: it's fulfilled by
+  // merchant from the warehouse, so an empty FBA shelf is fine. The China PO still keeps a case
+  // in the warehouse.
+  const r = recommendTransfer(0.1, 2, 0, 100_000, T, settings({ case_pack: 50 }));
+  assert.equal(r.recommended_ship_qty, 0);
+  assert.equal(r.too_slow_for_fba, true);
 });
 
-test('transfer: ship a partial case when the warehouse can’t fill a whole one (43 of 50 → 43)', () => {
+test('transfer: RESCUE ships a partial case rather than let FBA go dark (43 of 50 → 43)', () => {
   const T = { ...QALO, fba_target_cover_days: 90 };
-  // The reported bug: warehouse holds 43 units, case pack 50 — the old logic floored the
-  // spare to whole cases and shipped ZERO. We must ship the 43: a partial pick beats a stockout.
+  // v=1, FBA 20 units < the 35+14-day rescue floor → FBA would go dark before the next cycle.
+  // Whole-case-only is the normal rule, but a rescue is the one exception: ship the loose 43
+  // the warehouse has rather than nothing.
   const r = recommendTransfer(1, 20, 0, 43, T, settings({ case_pack: 50 }));
   assert.equal(r.recommended_ship_qty, 43);
 });
@@ -92,14 +95,14 @@ test('transfer: warehouse reserve is protected and the shortfall is reported, no
   assert.equal(r.shortage, 1200);
 });
 
-test('transfer: rounds the ask up to case packs, ships the full spare above the reserve', () => {
-  // required raw 1300 → whole cases → 1300 (already a multiple). Warehouse 725, buffer 600 →
-  // spare 125. We ship the whole 125 (NOT floored down to 100) — leaving 25 sellable units
-  // stranded to keep case-purity would be the old mistake.
+test('transfer: whole cases only — a sub-case spare waits (not a rescue)', () => {
+  // required 1300 (whole cases). Warehouse 725, buffer 600 → spare 125. Loose picks to FBA are
+  // too costly, and this isn't a rescue (FBA has ~90 days), so ship WHOLE cases only:
+  // floor(125/50) = 2 cases = 100. The loose 25 waits for a full case.
   const r = recommendTransfer(20, 1800, 0, 725, QALO, settings({ case_pack: 50 }));
   assert.equal(r.required, 1300);
   assert.equal(r.safe, 125);
-  assert.equal(r.recommended_ship_qty, 125);
+  assert.equal(r.recommended_ship_qty, 100);
 });
 
 test('po: a deficit is closed in ONE order, placed TODAY', () => {

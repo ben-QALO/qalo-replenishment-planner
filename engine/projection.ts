@@ -28,7 +28,7 @@ const ceilTo = (qty: number, m: number | null | undefined): number => {
 // Round to the NEAREST whole case (half up), not always up. Used for China POs so a need of 53
 // settles to one 50-case (not 100) while 75 still rounds up to 100 — avoids burying slow movers in
 // a spare case for being barely over a line. The MOQ floor still applies before this, so the result
-// is never below one case. Transfers keep ceilTo (ship a whole case, capped at 6-month cover).
+// is never below one case. Transfers keep ceilTo (whole cases; too-slow SKUs ship nothing to FBA).
 const roundTo = (qty: number, m: number | null | undefined): number => {
   const mult = m && m > 1 ? m : 1;
   return (Math.floor(qty / mult + 0.5) * mult) || 0;   // `|| 0` normalizes -0 → 0
@@ -41,9 +41,12 @@ export interface TransferRec {
   safe: number;
   /** How much the warehouse is short of the requirement (0 when it can cover). */
   shortage: number;
-  /** What to actually ship this cycle = min(required, safe). Whole cases when the warehouse
-   *  can fill the ask; a partial (loose) pick when it can't — a partial beats a stockout. */
+  /** What to actually ship this cycle. Whole cases only, except a rescue may ship a loose partial
+   *  to keep FBA from going dark. */
   recommended_ship_qty: number;
+  /** True when the SKU is too slow to justify stocking at FBA (one case > 6 months of cover) and
+   *  no rescue is needed — the tool ships nothing and leaves it merchant-fulfilled. */
+  too_slow_for_fba?: boolean;
 }
 
 /**
@@ -77,26 +80,37 @@ export function recommendTransfer(
   // trickle-seller fires a cycle too late and grazes zero.)
   const rescue = fbaAvailable + fbaComing < velocity * (t.fba_ship_checkin_days + t.review_period_fba_days);
 
-  // Prefer WHOLE case packs: always round the ask UP to a full case. Shipping cases is what
-  // the warehouse is set up for (loose picks cost more), and we'd rather run slightly long
-  // than out of stock. The only ceiling is 6 months of cover — for a slow mover where a
-  // full case would bury months of cash, trim the ask to the 6-month mark instead (a partial
-  // pick), so we never overfill a trickle SKU. `required` is what we'd ideally send.
+  // WHOLE CASES ONLY — a loose (sub-case) pick to FBA is too costly to be worth it.
+  //   • Too slow for FBA: if even ONE case would be more than 6 months of FBA cover, the demand
+  //     isn't there to justify stocking it at Amazon — ship nothing and leave it merchant-fulfilled
+  //     (the China PO still keeps a case in the warehouse). Flagged, not force-switched.
+  //   • Otherwise ship whole cases toward the 90-day goal.
+  // The ONE exception is a rescue (FBA would go dark before the next cycle): a loose partial is
+  // then allowed, because staying in stock beats saving the loose-pick cost.
   const cp = settings?.case_pack && settings.case_pack > 1 ? settings.case_pack : 1;
   const SIX_MONTHS_DAYS = 183;
-  const sixMonthCap = Math.max(0, Math.floor(velocity * SIX_MONTHS_DAYS - projectedOnArrival));
-  const required = Math.min(ceilTo(rawNeed, cp), sixMonthCap);
+  // Too slow for FBA: never ship it there (even if FBA is low) — it's fulfilled by merchant from
+  // the warehouse, so an empty FBA shelf is fine. The rescue exception below is for real movers
+  // whose warehouse is momentarily short, not for SKUs we've decided not to stock at Amazon.
+  const tooSlowForFba = cp > velocity * SIX_MONTHS_DAYS;   // one whole case > 6 months of cover
+  if (tooSlowForFba) {
+    return { required: 0, safe: 0, shortage: 0, recommended_ship_qty: 0, too_slow_for_fba: true };
+  }
+  const required = ceilTo(rawNeed, cp);
 
-  // Warehouse spare. The reserve is a SOFT floor — a rescue may ship into it so Amazon
-  // never goes dark while a sellable unit sits idle. Crucially we DON'T floor the shippable
-  // amount to whole cases: if the warehouse holds 43 of a 50-unit case, ship the 43 rather
-  // than nothing. A partial (loose) pick therefore happens only when the warehouse can't
-  // fill the case-sized ask — never as a reason to ship zero.
+  // Warehouse spare. The reserve is a SOFT floor a rescue may ship into so Amazon never goes dark.
   const bufferUnits = Math.round(velocity * t.warehouse_buffer_days);
   const safe = rescue ? Math.max(0, warehouseOnHand) : Math.max(0, warehouseOnHand - bufferUnits);
 
-  const recommended = Math.min(required, safe);
-  return { required, safe, shortage: Math.max(0, required - safe), recommended_ship_qty: recommended };
+  // Normal: ship WHOLE cases only (round the shippable amount down to a case). The one exception is
+  // a true stockout rescue — FBA would hit ZERO before this shipment can land (won't survive the
+  // ship leg): then ship whatever the warehouse can spare, loose partial included, rather than let
+  // Amazon go dark. (This is a tighter bar than the reserve-dip `rescue`, so partials stay rare.)
+  const stockoutImminent = fbaAvailable + fbaComing < velocity * t.fba_ship_checkin_days;
+  const recommended = stockoutImminent
+    ? Math.min(required, safe)
+    : Math.min(required, Math.floor(safe / cp) * cp);
+  return { required, safe, shortage: Math.max(0, required - recommended), recommended_ship_qty: recommended };
 }
 
 export interface PoRec {

@@ -26,7 +26,10 @@ function check(name: string, args: {
   test(`invariant: ${name}`, () => {
     const s = settings({ case_pack: args.cp, order_multiple: args.cp });
     const plan = projectPlan(args.v, args.fba, args.coming ?? 0, args.wh, args.pos ?? [], T, s, HORIZON, 1.5);
-    const h = planHealth(plan, { velocity: args.v, settleDay, peakTolerance: args.peakTolerance ?? 0.95 });
+    // 0.90 = the engine's own calibrated "holding goal" line. Whole-case-only transfers (loose
+    // partials are shipped only to rescue a stockout) land the steady peak within ~one case of
+    // goal, so ~90% is expected; the hard guarantee remains zero dark days after settle.
+    const h = planHealth(plan, { velocity: args.v, settleDay, peakTolerance: args.peakTolerance ?? 0.90 });
     assert.ok(h.ok, `${name} → ${h.violations.join('; ')} (steady peak ${Math.round(h.steadyPeakFrac * 100)}%, dark-after-settle ${h.darkDaysAfterSettle})`);
   });
 }

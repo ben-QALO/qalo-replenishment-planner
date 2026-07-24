@@ -123,6 +123,7 @@ export function computeRecommendations(input: EngineInput, today: string): Engin
       ? recommendPo(vel.velocity, positions.total_pipeline, positions.fba_position, template, settings, today)
       : { recommended_po_qty: 0, need_by_arrival: null, place_by_date: null, flags: [] };
     if (transfer.shortage > 0) flags.push('WAREHOUSE_SHORT');
+    if (transfer.too_slow_for_fba) flags.push('TOO_SLOW_FOR_FBA');
     flags.push(...po.flags);
 
     // Forward runway "if you do nothing new": first day FBA hits zero vs earliest arrival.

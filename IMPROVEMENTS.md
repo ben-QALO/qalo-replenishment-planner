@@ -5,6 +5,25 @@ Newest issues at the top. Status: 🔴 not started · 🟡 in progress · 🟢 d
 
 ---
 
+## 5. 🟢 Transfer policy for slow movers — whole cases only, too-slow → merchant-fulfilled  ·  BUILT + TESTED
+
+DONE (`engine/projection.ts` recommendTransfer):
+- **Too slow for FBA** = one whole case > 6 months of cover (~<8/mo). These get **no FBA transfer**
+  at all (flag `TOO_SLOW_FOR_FBA`) — left merchant-fulfilled; the China PO still keeps a case in the
+  warehouse. Not force-switched to FBM, just never asked to transfer. (Benoit: partial picks to FBA
+  are too costly; if demand isn't there, keep it FBM but always stocked at the warehouse.)
+- **Whole 50-cases only** for everyone else (dropped the old 6-month partial trim).
+- **One exception — true stockout rescue:** FBA would hit zero before a shipment lands AND the
+  warehouse can't fill a full case → ship what's on hand (a loose partial beats going dark).
+- Removed the old "ship the full loose spare above reserve" behavior.
+
+Verified on live data: 32 SKUs now TOO_SLOW_FOR_FBA (ship 0); FBA transfer volume ~13,900 → 11,100;
+partials only for genuine near-zero rescues (93 today, an artifact of the under-stocked catch-up
+state — they become whole cases once warehouses refill). 108/108 tests pass; steady state 0 dark
+days, ~92% FBA peak (whole-case tradeoff; plan-invariant guard set to the engine's 90% line).
+
+---
+
 ## 4. 🟢 ASIN consolidation — plan duplicate Amazon SKUs as one product  ·  BUILT + TESTED
 
 DONE (`assemble.ts` + `engine/index.ts` + `types.ts`): merchant SKUs sharing an ASIN plan as ONE
