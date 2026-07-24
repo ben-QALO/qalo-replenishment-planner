@@ -43,6 +43,8 @@ export function SkuDetail({ sku, today, templates, refresh }: {
     setForm({
       classification: s.classification ?? 'unclassified',
       fulfillment_channel: s.fulfillment_channel ?? 'fba',
+      category: s.category ?? 'core',
+      wearable_role: s.wearable_role ?? '',
       asin: s.asin ?? '',
       case_pack: s.case_pack ?? '',
       moq: s.moq ?? '',
@@ -63,6 +65,8 @@ export function SkuDetail({ sku, today, templates, refresh }: {
     const patch: Record<string, unknown> = {
       classification: form.classification,
       fulfillment_channel: form.fulfillment_channel || 'fba',
+      category: form.category || 'core',
+      wearable_role: form.category === 'wearable' ? (form.wearable_role || null) : null,
       asin: form.asin.trim() || null,
       case_pack: form.case_pack === '' ? null : Number(form.case_pack),
       moq: form.moq === '' ? null : Number(form.moq),
@@ -186,6 +190,19 @@ export function SkuDetail({ sku, today, templates, refresh }: {
               <option value="fba">FBA — ship warehouse stock to Amazon</option>
               <option value="fbm">FBM — merchant-fulfilled, never ship to FBA</option>
             </select></label>
+          <label style={{ fontSize: 12 }}>Product family<br />
+            <select className="field" style={{ width: '100%' }} value={form.category} onChange={set('category')}>
+              <option value="core">CORE — silicone (planned as usual)</option>
+              <option value="wearable">WEARABLE — smart ring / sizing kit</option>
+            </select></label>
+          {form.category === 'wearable' && (
+            <label style={{ fontSize: 12 }}>Wearable role<br />
+              <select className="field" style={{ width: '100%' }} value={form.wearable_role} onChange={set('wearable_role')}>
+                <option value="">— none —</option>
+                <option value="smart_ring">Smart ring (splits the forecast)</option>
+                <option value="sizing_kit">Sizing kit (attach product)</option>
+              </select></label>
+          )}
           <label style={{ fontSize: 12 }}>Lead-time template override<br />
             <select className="field" style={{ width: '100%' }} value={form.template_override_id} onChange={set('template_override_id')}>
               <option value="">— inherit global —</option>

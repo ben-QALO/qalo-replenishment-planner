@@ -19,6 +19,24 @@ export interface SkuResult {
   status: string; flags: string[]; why: string; risk_score: number; daily_revenue: number;
   template_label: string; template: Record<string, number>; include_in_plans: boolean;
   amazon_days_of_supply: number | null; amazon_min_inventory_level: number | null;
+  category: 'core' | 'wearable';
+  wearable_report: WearableReport | null;
+}
+
+export interface WearableMonth {
+  month: string; forecast_demand: number; fba_target_units: number;
+  expected_transfer: number; recommended_order: number; order_lands_month: string;
+  ideal_wh_for_amazon: number; flags?: string[];
+}
+export interface WearableReport {
+  is_attach_product: boolean; variant_share: number; attach_rate: number | null;
+  lead_days: number; lead_months: number; ideal_wh_days: number;
+  ideal_wh_days_breakdown: { china_lead: number; review_period_po: number; safety: number };
+  actual_run_rate_month: number; forecast_run_rate_month: number; multiplier: number | null;
+  months: WearableMonth[];
+}
+export interface WearableRollup {
+  months: WearableMonth[]; total_multiplier: number | null; skus: string[];
 }
 
 export interface Summary {
@@ -30,6 +48,7 @@ export interface Summary {
 export interface SkusResponse {
   results: SkuResult[]; summary: Summary | null; snapshotDate: string | null; today?: string;
   settings?: Record<string, SkuSettingsRow>;
+  wearableRollup?: WearableRollup | null;
 }
 
 export interface SkuSettingsRow {
@@ -37,7 +56,10 @@ export interface SkuSettingsRow {
   case_pack: number | null; moq: number | null; order_multiple: number | null;
   velocity_override: number | null; growth_multiplier: number | null;
   template_override_id: number | null; param_overrides: Record<string, number> | null; notes: string | null;
+  category?: 'core' | 'wearable'; wearable_role?: 'smart_ring' | 'sizing_kit' | null; attach_rate_override?: number | null;
 }
+
+export interface ForecastResponse { year: number; monthlyUnits: number[]; years: number[]; }
 
 async function handle<T>(res: Response): Promise<T> {
   if (!res.ok) {

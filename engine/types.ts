@@ -42,10 +42,21 @@ export interface SnapshotLine {
   parse_flags?: string[];
 }
 
+export type ProductCategory = 'core' | 'wearable';
+export type WearableRole = 'smart_ring' | 'sizing_kit';
+
 export interface SkuSettings {
   classification: Classification;
   /** 'fba' (ship warehouse stock to Amazon) or 'fbm' (merchant-fulfilled — never ship to FBA). */
   fulfillment_channel?: 'fba' | 'fbm';
+  /** 'core' (silicone — planned exactly as today) or 'wearable' (smart rings + sizing kit —
+   *  warehouse ignored, China PO becomes an informative forecast report). Defaults to 'core'. */
+  category?: ProductCategory;
+  /** For WEARABLE only: 'smart_ring' (a SLIM/OG variant the aggregate forecast splits across)
+   *  or 'sizing_kit' (R-RNGSZ-03, planned as an attach product). */
+  wearable_role?: WearableRole | null;
+  /** Pin the sizing kit's attach rate (kit units per smart-ring unit) instead of learning it. */
+  attach_rate_override?: number | null;
   /** QALO internal SKU (team-facing). Falls back to the Amazon SKU when unmapped. */
   qalo_sku?: string;
   /** Authoritative ASIN from the SKU map (falls back to the catalog's ASIN). */
@@ -115,6 +126,17 @@ export interface EngineInput {
    * FBM-tested items show their real sales rate.
    */
   externalDemand?: Record<string, { units: number; days: number }>;
+  /**
+   * Board-approved yearly forecast for smart rings, in AGGREGATE and in Amazon-basis units.
+   * `monthlyUnits` is 12 numbers (Jan..Dec of `year`). The engine splits each month across
+   * `smartRingSkus` by trailing velocity share and derives the sizing kit as an attach product.
+   */
+  wearableForecast?: {
+    year: number;
+    monthlyUnits: number[];      // length 12, Jan..Dec
+    smartRingSkus: string[];     // the variant SKUs the aggregate splits across
+    sizingKitSku?: string | null;
+  } | null;
 }
 
 export type StatusTier =
@@ -194,6 +216,44 @@ export interface SkuResult {
 
   amazon_days_of_supply: number | null;
   amazon_min_inventory_level: number | null;
+
+  /** 'core' (default) or 'wearable'. Drives the CORE/WEARABLE toggle and the different PO logic. */
+  category: ProductCategory;
+  /** WEARABLE only: the informative rolling-12-month plan for this SKU. null for CORE. */
+  wearable_report: WearableReport | null;
+}
+
+/** One forecast month for a WEARABLE SKU. All unit figures are Amazon-basis. */
+export interface WearableMonth {
+  month: string;               // 'YYYY-MM'
+  forecast_demand: number;     // this SKU's split of the aggregate forecast that month
+  fba_target_units: number;    // the shelf goal at FBA that month
+  expected_transfer: number;   // warehouse→FBA that month, whole cases
+  recommended_order: number;   // China order to PLACE that month (whole cases)
+  order_lands_month: string;   // 'YYYY-MM' the placed order lands (month + lead months)
+  ideal_wh_for_amazon: number; // ideal units to hold at the warehouse for Amazon that month
+  flags?: string[];            // e.g. FORECAST_EXTRAPOLATED
+}
+
+/** The informative WEARABLE plan for one SKU. */
+export interface WearableReport {
+  is_attach_product: boolean;  // true for the sizing kit
+  variant_share: number;       // this SKU's share of smart-ring velocity (0..1); attach ratio for the kit
+  attach_rate: number | null;  // sizing kit only: learned/pinned attach rate, else null
+  lead_days: number;           // chinaLeadDays for this SKU (~90)
+  lead_months: number;         // lead in whole months (round)
+  ideal_wh_days: number;       // days of Amazon demand the ideal WH level covers
+  ideal_wh_days_breakdown: { china_lead: number; review_period_po: number; safety: number };
+  actual_run_rate_month: number;   // trailing actual, units/month (velocity × 30)
+  forecast_run_rate_month: number; // near-term forecast, units/month (next 3 months mean)
+  multiplier: number | null;       // forecast ÷ actual run rate (null when no actual signal)
+  months: WearableMonth[];         // rolling 12 months from today
+}
+
+export interface WearableRollup {
+  months: WearableMonth[];     // element-wise sums across all smart-ring + kit SKUs
+  total_multiplier: number | null;
+  skus: string[];              // the SKUs included in the rollup
 }
 
 export interface EngineSummary {
@@ -217,4 +277,6 @@ export interface EngineOutput {
   today: string;
   results: SkuResult[];
   summary: EngineSummary;
+  /** Aggregate WEARABLE plan (all smart-ring + kit SKUs summed). null when no forecast is set. */
+  wearableRollup?: WearableRollup | null;
 }

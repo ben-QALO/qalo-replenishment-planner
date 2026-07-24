@@ -2,6 +2,9 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { api, fmtInt, fmtNum, STATUS_META, STATUS_TIERS, type SkusResponse, type SkuResult } from '../api.ts';
 import { StatusBadge, Flags, toast, confirmDialog } from '../components/ui.tsx';
 import { CountUp, ScoreGauge } from '../components/charts.tsx';
+import { WearableReport } from '../components/WearableReport.tsx';
+
+type Family = 'core' | 'wearable';
 
 const ShipIcon = () => (
   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round">
@@ -49,6 +52,7 @@ export function Dashboard({ data, worklist, refresh, openSku, go }: {
   data: SkusResponse; worklist: Worklist | null; refresh: () => void;
   openSku: (sku: string) => void; go: (hash: string) => void;
 }) {
+  const [family, setFamily] = useState<Family>('core');
   const [queue, setQueue] = useState<QueueKey>('ship');
   const [edited, setEdited] = useState<Record<string, number>>({});
   const [unchecked, setUnchecked] = useState<Record<string, boolean>>({});
@@ -65,24 +69,32 @@ export function Dashboard({ data, worklist, refresh, openSku, go }: {
   const s = data.summary;
   const results = data.results;
 
+  // CORE (silicone) vs WEARABLE (smart rings + sizing kit). The whole Action Center — queues,
+  // score, stat cards — scopes to the selected family. WEARABLE plans differently: the China-PO
+  // tab becomes an informative forecast report, and the warehouse number is ignored.
+  const hasWearable = useMemo(() => results.some(r => r.category === 'wearable'), [results]);
+  const famOf = (r: SkuResult): Family => (r.category === 'wearable' ? 'wearable' : 'core');
+  const famResults = useMemo(() => results.filter(r => famOf(r) === family), [results, family]);
+  const isWearable = family === 'wearable';
+
   // Default order across every queue: best sellers first (most units sold per day),
   // tie-broken by revenue per day.
   const byBestSeller = (a: SkuResult, b: SkuResult) =>
     (b.velocity ?? 0) - (a.velocity ?? 0) || (b.daily_revenue - a.daily_revenue);
 
   const shipRows = useMemo(() =>
-    results.filter(r => r.include_in_plans && r.recommended_ship_qty > 0).sort(byBestSeller),
-    [results]);
+    famResults.filter(r => r.include_in_plans && r.recommended_ship_qty > 0).sort(byBestSeller),
+    [famResults]);
   const poRows = useMemo(() =>
-    results.filter(r => r.include_in_plans && r.recommended_po_qty > 0).sort(byBestSeller),
-    [results]);
+    famResults.filter(r => r.include_in_plans && r.recommended_po_qty > 0).sort(byBestSeller),
+    [famResults]);
   const riskRows = useMemo(() =>
-    results.filter(r => r.status === 'AT_RISK' || r.status === 'UNCLASSIFIED'
+    famResults.filter(r => r.status === 'AT_RISK' || r.status === 'UNCLASSIFIED'
       // A stockout only "needs info" when the tool has NOTHING actionable for it — no ship AND
       // no PO. If a China PO is already recommended, it lives in the China PO tab, not here.
       || (r.status === 'STOCKOUT' && r.recommended_ship_qty === 0 && r.recommended_po_qty === 0 && r.classification === 'replenishable'))
       .sort(byBestSeller),
-    [results]);
+    [famResults]);
 
   const activeRows = queue === 'ship' ? shipRows : queue === 'po' ? poRows : riskRows;
 
@@ -187,7 +199,11 @@ export function Dashboard({ data, worklist, refresh, openSku, go }: {
   // stock (classification 'replenishable') — the same set the To ship / To order plan
   // rings use. New/undecided and discontinued items are left out so they don't distort
   // readiness. Status counts are tallied from those rows directly.
-  const keepInStock = useMemo(() => results.filter(r => r.classification === 'replenishable'), [results]);
+  const keepInStock = useMemo(() => famResults.filter(r => r.classification === 'replenishable'), [famResults]);
+  // Family-scoped plan totals for the stat cards (the summary `s` is global).
+  const famShipUnits = useMemo(() => shipRows.reduce((t, r) => t + r.recommended_ship_qty, 0), [shipRows]);
+  const famPoUnits = useMemo(() => poRows.reduce((t, r) => t + r.recommended_po_qty, 0), [poRows]);
+  const nextMonthForecast = data.wearableRollup?.months?.[0]?.forecast_demand ?? 0;
   const countOf = useMemo(() => {
     const c: Record<string, number> = {
       STOCKOUT: 0, CRITICAL: 0, ORDER_NOW: 0, ORDER_SOON: 0,
@@ -236,6 +252,17 @@ export function Dashboard({ data, worklist, refresh, openSku, go }: {
       <h1>Action Center</h1>
       <div className="h-sub">What needs a decision today. Clear the tasks up top, then work the queue — every number opens its full reasoning.</div>
 
+      {hasWearable && (
+        <div className="family-toggle">
+          <div className="segmented">
+            <button className={family === 'core' ? 'on' : ''} style={{ ['--seg-c' as any]: 'var(--c-health)' }}
+              onClick={() => { setFamily('core'); setQueue('ship'); }}>CORE <span className="fam-sub">silicone</span></button>
+            <button className={family === 'wearable' ? 'on' : ''} style={{ ['--seg-c' as any]: 'var(--grad-purple)' }}
+              onClick={() => { setFamily('wearable'); setQueue('ship'); }}>WEARABLE <span className="fam-sub">smart rings</span></button>
+          </div>
+        </div>
+      )}
+
       {wlItems.length > 0 && (
         <div className="worklist">
           <span className="wl-title">To do first</span>
@@ -271,10 +298,15 @@ export function Dashboard({ data, worklist, refresh, openSku, go }: {
         </div>
 
         <div className="stat-cards side">
-          <StatCard label="To ship" value={s.ship_units_total} sub={`units to Amazon · ${fmtInt(s.ship_skus)} SKUs`}
-            color="var(--c-ship)" pct={share(s.ship_skus)} icon={<ShipIcon />} onClick={() => setQueue('ship')} />
-          <StatCard label="To order" value={s.po_units_total} sub={`units from China · ${fmtInt(s.po_skus)} SKUs`}
-            color="var(--c-order)" pct={share(s.po_skus)} icon={<OrderIcon />} onClick={() => setQueue('po')} />
+          <StatCard label="To ship" value={famShipUnits} sub={`units to Amazon · ${fmtInt(shipRows.length)} SKUs`}
+            color="var(--c-ship)" pct={share(shipRows.length)} icon={<ShipIcon />} onClick={() => setQueue('ship')} />
+          {isWearable ? (
+            <StatCard label="Forecast next month" value={nextMonthForecast} sub="smart-ring units (Amazon)"
+              color="var(--c-order)" pct={1} icon={<OrderIcon />} onClick={() => setQueue('po')} />
+          ) : (
+            <StatCard label="To order" value={famPoUnits} sub={`units from China · ${fmtInt(poRows.length)} SKUs`}
+              color="var(--c-order)" pct={share(poRows.length)} icon={<OrderIcon />} onClick={() => setQueue('po')} />
+          )}
           <StatCard label="Open requests" value={openRequests} sub="transfer requests to review & export"
             color="var(--c-health)" pct={openRequests > 0 ? 1 : 0}
             icon={<ReconcileIcon />} onClick={() => go('#/warehouse?tab=transfers')} />
@@ -299,12 +331,13 @@ export function Dashboard({ data, worklist, refresh, openSku, go }: {
             <button className={queue === 'ship' ? 'on' : ''} style={{ ['--seg-c' as any]: 'var(--ship)' }} onClick={() => setQueue('ship')}>
               Ship to FBA <span className="seg-n">{shipRows.length}</span></button>
             <button className={queue === 'po' ? 'on' : ''} style={{ ['--seg-c' as any]: 'var(--po)' }} onClick={() => setQueue('po')}>
-              China PO <span className="seg-n">{poRows.length}</span></button>
+              {isWearable ? 'Ordering plan' : <>China PO <span className="seg-n">{poRows.length}</span></>}</button>
             <button className={queue === 'risk' ? 'on' : ''} style={{ ['--seg-c' as any]: 'var(--atrisk)' }} onClick={() => setQueue('risk')}>
               Needs info <span className="seg-n">{riskRows.length}</span></button>
           </div>
           <div className="spacer" />
-          {queue !== 'risk' && (
+          {/* WEARABLE's ordering plan is informative — no Create-PO action there. Transfers still act. */}
+          {queue !== 'risk' && !(isWearable && queue === 'po') && (
             <>
               <button className="btn sm" disabled={selectableRows.length === 0} onClick={toggleSelectAll}>
                 {allSelected ? 'Clear all' : 'Select all'}
@@ -321,7 +354,9 @@ export function Dashboard({ data, worklist, refresh, openSku, go }: {
         </div>
 
         <div style={{ maxHeight: 560, overflowY: 'auto' }}>
-          {activeRows.length === 0 ? (
+          {isWearable && queue === 'po' ? (
+            <WearableReport results={famResults} rollup={data.wearableRollup ?? null} refresh={refresh} openSku={openSku} />
+          ) : activeRows.length === 0 ? (
             <div className="empty">
               {queue === 'ship' && 'Nothing to ship — either FBA is covered, or the warehouse is empty (import your NetSuite warehouse report on the Imports page).'}
               {queue === 'po' && 'No PO recommendations right now.'}
