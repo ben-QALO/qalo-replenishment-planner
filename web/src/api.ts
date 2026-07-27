@@ -25,7 +25,8 @@ export interface SkuResult {
 
 export interface WearableMonth {
   month: string; forecast_demand: number; fba_target_units: number;
-  expected_transfer: number; recommended_order: number; order_lands_month: string;
+  expected_transfer: number; cumulative_transfer: number;
+  recommended_order: number; order_lands_month: string; must_be_at_warehouse_by: string;
   ideal_wh_for_amazon: number; flags?: string[];
 }
 export interface WearableReport {
@@ -37,6 +38,20 @@ export interface WearableReport {
 }
 export interface WearableRollup {
   months: WearableMonth[]; total_multiplier: number | null; skus: string[];
+}
+
+export interface WearableTransferEvent {
+  day: number; date: string; qty: number; arrives_day: number; arrives_date: string;
+}
+export interface WearablePlanPoint { day: number; fba: number; in_transit: number; goal: number; }
+export interface WearablePlan {
+  series: WearablePlanPoint[];
+  transfers: WearableTransferEvent[];
+  stockout_day: number;
+  horizon_days: number;
+  review_period_days: number;
+  ship_leg_days: number;
+  lead_days: number;
 }
 
 export interface Summary {

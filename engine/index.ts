@@ -8,7 +8,7 @@ import {
   fbaRopDays, poRopDays, fbaTargetDays, poTargetDays, chinaLeadDays, COVER_CAP,
 } from './replenishment.ts';
 import { recommendTransfer, recommendPo, projectDoNothing } from './projection.ts';
-import { buildWearablePlans, wearableTransferRates, type WearableSkuInput, type WearableRateInput } from './wearable.ts';
+import { buildWearablePlans, wearableDemandFractions, wearableDemandCurve, wearableTransferQty, type WearableSkuInput, type WearableRateInput } from './wearable.ts';
 import { assignStatus } from './status.ts';
 import { addDays, diffDays } from './dates.ts';
 
@@ -55,7 +55,7 @@ export function computeRecommendations(input: EngineInput, today: string): Engin
   // WEARABLE transfers are sized against the FORECAST, not trailing sales (a smart ring's season
   // turns faster than a 5-week transfer leg, so trailing sales ship for the season you're leaving).
   // The forecast splits by trailing-velocity share, so resolve those few velocities up front.
-  const wearableTransferRate: Record<string, number> = (() => {
+  const wearableFrac: Record<string, number> = (() => {
     const fc = input.wearableForecast;
     if (!fc?.monthlyUnits?.length) return {};
     const rateInputs: WearableRateInput[] = [];
@@ -73,7 +73,7 @@ export function computeRecommendations(input: EngineInput, today: string): Engin
         attach_rate_override: st.attach_rate_override,
       });
     }
-    return wearableTransferRates(rateInputs, { year: fc.year, monthlyUnits: fc.monthlyUnits }, today);
+    return wearableDemandFractions(rateInputs);
   })();
 
   for (const sku of allSkus) {
@@ -146,14 +146,29 @@ export function computeRecommendations(input: EngineInput, today: string): Engin
     // top-up need (uncapped by warehouse). WEARABLE also gets NO prescriptive China PO — its
     // ordering lives in the informative rolling-12-month report (attached after the loop).
     const isWearable = settings?.category === 'wearable';
-    // WEARABLE: size the shipment on forecast demand for the window it will cover once it lands,
-    // so it ships INTO a season rather than trailing it. Falls back to trailing sales if no forecast.
-    const forecastRate = isWearable ? wearableTransferRate[sku] : undefined;
-    const shipVelocity = forecastRate && forecastRate > 0 ? forecastRate : vel.velocity;
-    const transfer = planning && !isFbm && shipVelocity !== null && shipVelocity > 0 && !suppressShip
-      ? recommendTransfer(shipVelocity, positions.fba_available, positions.fba_coming, positions.warehouse_on_hand, template, settings, { ignoreWarehouseCap: isWearable })
-      : { required: 0, safe: 0, shortage: 0, recommended_ship_qty: 0 };
-    if (forecastRate && forecastRate > 0 && transfer.recommended_ship_qty > 0) flags.push('FORECAST_SIZED');
+    // WEARABLE transfers are sized straight off the forecast curve (see engine/wearable.ts): the
+    // demand DURING the 5-week transit and the demand AFTER the shipment lands are summed
+    // separately, which is what keeps a smart ring in stock through a seasonal turn.
+    const frac = isWearable ? wearableFrac[sku] : undefined;
+    const fc = input.wearableForecast;
+    // Overstock suppression is skipped for WEARABLE: `total_pipeline` includes the warehouse and
+    // open China POs, which are shared with retail/Shopify — so a big shared pool would otherwise
+    // look like a glut and stop shipping to Amazon. The forecast decides instead.
+    const canShip = planning && !isFbm && (isWearable || !suppressShip);
+    let transfer = { required: 0, safe: 0, shortage: 0, recommended_ship_qty: 0 } as ReturnType<typeof recommendTransfer>;
+    let forecastRate: number | null = null;
+    if (canShip && frac && frac > 0 && fc?.monthlyUnits?.length) {
+      const demand = wearableDemandCurve(frac, { year: fc.year, monthlyUnits: fc.monthlyUnits }, today);
+      const calc = wearableTransferQty({
+        demand, day: 0, fbaAvailable: positions.fba_available, fbaComing: positions.fba_coming,
+        template, casePack: settings?.case_pack,
+      });
+      transfer = { required: calc.qty, safe: calc.qty, shortage: 0, recommended_ship_qty: calc.qty };
+      forecastRate = calc.display_rate;
+      if (calc.qty > 0) flags.push('FORECAST_SIZED');
+    } else if (canShip && vel.velocity !== null && vel.velocity > 0) {
+      transfer = recommendTransfer(vel.velocity, positions.fba_available, positions.fba_coming, positions.warehouse_on_hand, template, settings, { ignoreWarehouseCap: isWearable });
+    }
     const po = planning && !isWearable && vel.velocity !== null && vel.velocity > 0 && !overstocked
       ? recommendPo(vel.velocity, positions.total_pipeline, positions.fba_position, template, settings, today)
       : { recommended_po_qty: 0, need_by_arrival: null, place_by_date: null, flags: [] };
@@ -302,7 +317,7 @@ export function computeRecommendations(input: EngineInput, today: string): Engin
       const role = input.skuSettings[r.sku]?.wearable_role;
       if (role !== 'smart_ring' && role !== 'sizing_kit') continue;
       wInputs.push({
-        sku: r.sku, role, velocity: r.velocity, fba_position: r.fba_position, template: r.template,
+        sku: r.sku, role, velocity: r.velocity, fba_available: r.fba_available, fba_coming: r.fba_coming, template: r.template,
         case_pack: input.skuSettings[r.sku]?.case_pack, attach_rate_override: input.skuSettings[r.sku]?.attach_rate_override,
       });
     }

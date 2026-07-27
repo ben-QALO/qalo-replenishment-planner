@@ -1,7 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { recommendTransfer } from '../projection.ts';
-import { buildWearablePlans, wearableTransferRates, type WearableSkuInput, type WearableRateInput } from '../wearable.ts';
+import {
+  buildWearablePlans, simulateWearableSku, wearableDemandFractions, wearableDemandCurve,
+  wearableTransferQty, type WearableSkuInput, type WearableRateInput,
+} from '../wearable.ts';
+import { diffDays } from '../dates.ts';
 import { settings } from './helpers.ts';
 import type { TemplateParams } from '../types.ts';
 
@@ -130,49 +134,145 @@ const rateInput = (sku: string, velocity: number | null, role: 'smart_ring' | 's
   extra: Partial<WearableRateInput> = {}): WearableRateInput =>
   ({ sku, role, velocity, template: WEARABLE, ...extra });
 
-test('transfer rate: sized on the forecast for the window the shipment will cover', () => {
-  // Flat 930/mo aggregate, single ring. Trailing velocity is only 1/day, so a rate near 30
-  // proves the FORECAST — not recent sales — drives the shipment.
-  // Shipping from Jan 15 lands Feb 19 and covers 60 days (into April), so the average sits a
-  // little above 930/31: a flat MONTHLY figure is a higher DAILY rate in short months
-  // (Feb = 930/28 ≈ 33.2/day). ~30.9 is the day-count-weighted average, and that's correct.
-  const rates = wearableTransferRates([rateInput('R', 1)], { year: 2026, monthlyUnits: flat(930) }, '2026-01-15');
-  assert.ok(rates['R'] > 29 && rates['R'] < 34, `expected ~31/day, got ${rates['R']}`);
+const qtyOn = (today: string, monthlyUnits: number[], fba: number, frac = 1, tmpl = WEARABLE) =>
+  wearableTransferQty({
+    demand: wearableDemandCurve(frac, { year: 2026, monthlyUnits }, today),
+    day: 0, fbaAvailable: fba, fbaComing: 0, template: tmpl, casePack: 20,
+  });
+
+test('transfer sizing: driven by the forecast, not by recent sales', () => {
+  // Flat 930/mo. Starting empty, the shipment must cover the 60-day goal window after it lands
+  // (~2 months of demand ≈ 1,860) plus the demand that accrues during the 35-day leg.
+  const c = qtyOn('2026-01-15', flat(930), 0);
+  assert.ok(c.target_units > 1700 && c.target_units < 2000, `goal window ≈2 months of demand, got ${c.target_units}`);
+  assert.ok(c.qty >= c.target_units, 'starting empty, the shipment must at least fill the goal window');
+  assert.equal(c.qty % 20, 0, 'whole cases only');
 });
 
-test('transfer rate: ramps INTO a seasonal peak instead of trailing it', () => {
-  // Quiet all year (300/mo ≈ 10/day) except a Nov/Dec peak (3000/mo ≈ 100/day).
+test('transfer sizing: counts demand DURING transit separately from demand after landing', () => {
+  // This is the fix for the post-peak stockout: heading out of a peak, the 35-day leg still carries
+  // heavy demand even though the months after it are quiet. Both terms must be counted.
   const seasonal = [300, 300, 300, 300, 300, 300, 300, 300, 300, 300, 3000, 3000];
-  const inputs = [rateInput('R', 10)];   // trailing sales are stuck at the quiet-season 10/day
-
-  // Late September: the 35-day leg lands in early November, so the shipment must already be
-  // sized for peak demand — far above the 10/day the SKU is actually selling right now.
-  const sept = wearableTransferRates(inputs, { year: 2026, monthlyUnits: seasonal }, '2026-09-25');
-  assert.ok(sept['R'] > 50, `late-Sept shipment should be sized for the Nov peak, got ${sept['R']}/day`);
-
-  // Mid-January: nothing but quiet months ahead, so it settles back to the quiet rate.
-  const jan = wearableTransferRates(inputs, { year: 2026, monthlyUnits: seasonal }, '2026-01-15');
-  assert.ok(jan['R'] < 15, `January shipment should be quiet-season sized, got ${jan['R']}/day`);
-  assert.ok(sept['R'] > jan['R'] * 3, 'peak sizing must dwarf quiet-season sizing');
+  const dec = qtyOn('2026-12-05', seasonal, 2000);
+  // December sells ~97/day, so ~2,700 drains away over the 35-day leg (which tails into a quiet
+  // January). A blended average across the months AFTER landing would have seen only ~10/day.
+  assert.ok(dec.sales_over_leg > 2500, `December leg demand should be heavy, got ${dec.sales_over_leg}`);
+  assert.ok(dec.sales_over_leg > dec.target_units * 3, 'leg demand must dwarf the quiet window ahead');
+  // 2,000 on hand can't absorb that, so what's left on arrival is negative — and the shipment
+  // must make up the whole hole plus the (quiet) goal window ahead.
+  assert.ok(dec.projected_on_arrival < 0, `expected a deficit on arrival, got ${dec.projected_on_arrival}`);
+  assert.ok(dec.qty > dec.target_units, 'must cover the transit shortfall on top of the goal window');
 });
 
-test('transfer rate: splits by variant share and derives the kit from its attach rate', () => {
-  const inputs = [
-    rateInput('SLIM-G', 3), rateInput('SLIM-S', 1),          // shares .75 / .25
-    rateInput('KIT', 0.4, 'sizing_kit'),                     // attach 0.4/4 = 0.10
-  ];
-  const rates = wearableTransferRates(inputs, { year: 2026, monthlyUnits: flat(1240) }, '2026-01-15');
-  // Assert the SHARES, which hold regardless of the window's calendar day-counts: Gold carries
-  // 3× Silver, and the kit is 0.10× the combined ring volume.
-  assert.ok(Math.abs(rates['SLIM-G'] / rates['SLIM-S'] - 3) < 0.01, `Gold:Silver should be 3:1, got ${rates['SLIM-G'] / rates['SLIM-S']}`);
-  const ringTotal = rates['SLIM-G'] + rates['SLIM-S'];
-  assert.ok(Math.abs(rates['KIT'] / ringTotal - 0.1) < 0.005, `kit should be 0.10× rings, got ${rates['KIT'] / ringTotal}`);
+test('transfer sizing: builds ahead of a peak and eases off once it passes', () => {
+  const seasonal = [300, 300, 300, 300, 300, 300, 300, 300, 300, 300, 3000, 3000];
+  // Late September: the leg lands in early November, so it must already be buying peak volume.
+  const sept = qtyOn('2026-09-25', seasonal, 500);
+  // Mid-February: quiet ahead and quiet behind.
+  const feb = qtyOn('2026-02-15', seasonal, 500);
+  assert.ok(sept.qty > feb.qty * 3, `pre-peak ${sept.qty} should dwarf quiet-season ${feb.qty}`);
 });
 
-test('transfer rate: no forecast signal yields no rate, so the caller keeps trailing sales', () => {
-  assert.deepEqual(wearableTransferRates([rateInput('R', 10)], { year: 2026, monthlyUnits: flat(0) }, '2026-01-15'), {});
-  // No smart rings at all (kit only) → nothing to split, no rates.
-  assert.deepEqual(wearableTransferRates([rateInput('KIT', 5, 'sizing_kit')], { year: 2026, monthlyUnits: flat(600) }, '2026-01-15'), {});
+test('demand fractions: split by variant share, kit by attach rate', () => {
+  const fracs = wearableDemandFractions([
+    rateInput('SLIM-G', 3), rateInput('SLIM-S', 1),      // shares .75 / .25
+    rateInput('KIT', 0.4, 'sizing_kit'),                 // attach 0.4/4 = 0.10
+  ]);
+  assert.equal(fracs['SLIM-G'], 0.75);
+  assert.equal(fracs['SLIM-S'], 0.25);
+  assert.ok(Math.abs(fracs['KIT'] - 0.1) < 1e-9);
+});
+
+test('demand fractions: no smart rings means no forecast claim (caller falls back)', () => {
+  assert.deepEqual(wearableDemandFractions([rateInput('KIT', 5, 'sizing_kit')]), {});
+});
+
+// ── the forward projection (chart + every-2-weeks schedule) ───────────────────
+
+const SEASONAL = [300, 300, 400, 500, 600, 600, 700, 800, 900, 1000, 3000, 2500];
+
+function sim(overrides: Partial<Parameters<typeof simulateWearableSku>[0]> = {}) {
+  return simulateWearableSku({
+    demandFrac: 1, forecast: { year: 2026, monthlyUnits: SEASONAL },
+    fbaAvailable: 200, fbaComing: 0, template: WEARABLE, casePack: 20, moq: 100,
+    today: '2026-01-15', horizonDays: 365, ...overrides,
+  });
+}
+
+test('projection: FBA never runs dry — the whole point of the plan', () => {
+  // Start at a healthy shelf (≈60 days of January demand) and follow the plan for over a year,
+  // straight through a 10× seasonal peak. This is the invariant that matters most: it is the
+  // regression guard for the post-peak stockout the blended-rate sizing used to cause.
+  for (const goal of [60, 90]) {
+    const p = sim({ template: { ...WEARABLE, fba_target_cover_days: goal }, fbaAvailable: 600, horizonDays: 500 });
+    assert.equal(p.stockout_day, -1, `goal=${goal}d: expected no stockout, got day ${p.stockout_day}`);
+    assert.ok(p.series.every(s => s.fba > 0), `goal=${goal}d: no day may sit at zero sellable stock`);
+  }
+});
+
+test('projection: keeps reviewing every 2 weeks all year (never goes quiet for months)', () => {
+  // The old blended-rate sizing silently skipped most review cycles because it thought FBA was
+  // already "at goal", then ran dry. Over 500 days on a 14-day cadence there are ~36 reviews, and
+  // a healthy plan should be acting on most of them.
+  const p = sim({ horizonDays: 500, fbaAvailable: 600 });
+  assert.ok(p.transfers.length >= 30, `expected a steady cadence, only got ${p.transfers.length} transfers`);
+});
+
+test('projection: survives even starting from an empty shelf', () => {
+  // Cold start: nothing at Amazon, nothing inbound. The first transfer still takes the ship leg to
+  // land, so a brief dip is unavoidable — but the plan must recover and hold from then on.
+  const p = sim({ fbaAvailable: 0, fbaComing: 0 });
+  const afterFirstArrival = p.series.filter(s => s.day > WEARABLE.fba_ship_checkin_days + 1);
+  assert.ok(afterFirstArrival.every(s => s.fba > 0), 'must stay in stock once the first shipment lands');
+});
+
+test('projection: transfers land on the every-2-weeks review cadence', () => {
+  const p = sim();
+  assert.equal(p.review_period_days, 14);
+  assert.ok(p.transfers.length > 0, 'expected a transfer schedule');
+  for (const t of p.transfers) {
+    assert.equal(t.day % 14, 0, `transfer on day ${t.day} is off-cadence`);
+    assert.equal(t.arrives_day, t.day + WEARABLE.fba_ship_checkin_days);
+    assert.equal(t.qty % 20, 0, `transfer of ${t.qty} is not whole cases`);
+  }
+});
+
+test('projection: ramps up into the Nov peak, then eases off', () => {
+  const p = sim();
+  const inMonth = (mk: string) => p.transfers.filter(t => t.date.slice(0, 7) === mk).reduce((s, t) => s + t.qty, 0);
+  // Shipments must be BUILT during Sep/Oct to be on the shelf for the Nov/Dec peak...
+  const prePeak = inMonth('2026-09') + inMonth('2026-10');
+  const quiet = inMonth('2026-02') + inMonth('2026-03');
+  assert.ok(prePeak > quiet * 2, `pre-peak shipping (${prePeak}) should dwarf the quiet season (${quiet})`);
+  // ...and the shelf goal itself must rise into the peak.
+  const goalNov = p.series.find(s => s.day === diffDays('2026-11-15', '2026-01-15'))!.goal;
+  const goalFeb = p.series.find(s => s.day === diffDays('2026-02-15', '2026-01-15'))!.goal;
+  assert.ok(goalNov > goalFeb * 3, `Nov goal (${goalNov}) should far exceed Feb (${goalFeb})`);
+});
+
+test('projection: day-0 transfer equals what the Ship-to-FBA queue shows', () => {
+  // The queue and the chart must be the same model. Both size today's shipment with
+  // wearableTransferQty on day 0, so the chart can never contradict the number the team acts on.
+  const today = '2026-09-25';
+  const fbaAvailable = 300, fbaComing = 40;
+  const expected = wearableTransferQty({
+    demand: wearableDemandCurve(1, { year: 2026, monthlyUnits: SEASONAL }, today),
+    day: 0, fbaAvailable, fbaComing, template: WEARABLE, casePack: 20,
+  }).qty;
+
+  const p = sim({ today, fbaAvailable, fbaComing, horizonDays: 60 });
+  assert.equal(p.transfers.find(t => t.day === 0)?.qty ?? 0, expected, 'projection day 0 must match the queue exactly');
+});
+
+test('projection: reports Amazon’s demand on the warehouse, ignoring the shared pool', () => {
+  // Warehouse stock is never an input — the same plan results no matter what NetSuite says, because
+  // the physical pool is shared with retail/Shopify. What the plan yields is the PULL requirement.
+  const p = sim();
+  const totalPull = p.transfers.reduce((s, t) => s + t.qty, 0);
+  const yearDemand = SEASONAL.reduce((a, c) => a + c, 0);
+  // Over a year the pull should be within a sane band of annual demand (plus the shelf it must hold).
+  assert.ok(totalPull > yearDemand * 0.8, `pull ${totalPull} too low vs demand ${yearDemand}`);
+  assert.ok(totalPull < yearDemand * 1.8, `pull ${totalPull} implausibly high vs demand ${yearDemand}`);
 });
 
 // ── rollup ────────────────────────────────────────────────────────────────────
