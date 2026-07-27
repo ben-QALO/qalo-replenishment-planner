@@ -88,7 +88,7 @@ export function importRoutes(app: FastifyInstance): void {
   });
 
   app.post('/api/imports/commit', (req, reply) => {
-    const body = (req.body ?? {}) as { file_id?: string; snapshot_date?: string };
+    const body = (req.body ?? {}) as { file_id?: string; snapshot_date?: string; force?: boolean };
     if (!body.file_id || !safeFileId(body.file_id)) return reply.code(400).send({ error: 'valid file_id required' });
 
     try {
@@ -97,6 +97,7 @@ export function importRoutes(app: FastifyInstance): void {
       const snapshotDate = body.snapshot_date ?? normalized.snapshotDate ?? today();
       const result = commitSnapshot(db, {
         snapshotDate,
+        force: body.force === true,
         filename: body.file_id.replace(/^upload-\d+-/, ''),
         fileHash,
         lines: normalized.lines,

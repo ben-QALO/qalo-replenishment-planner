@@ -90,12 +90,12 @@ export function Imports({ refresh }: { refresh: () => void }) {
     } finally { setBusy(false); }
   }
 
-  async function commit() {
+  async function commit(force = false) {
     if (!preview) return;
     setBusy(true);
     try {
       const res = await api.post<{ newSkus: string[]; revision: number; replacedPrevious: boolean; alreadyImported: boolean }>(
-        '/api/imports/commit', { file_id: preview.file_id });
+        '/api/imports/commit', { file_id: preview.file_id, force });
       if (res.alreadyImported) {
         toast('This exact file was already imported — nothing changed.');
       } else {
@@ -297,9 +297,15 @@ export function Imports({ refresh }: { refresh: () => void }) {
             <h3>Review before import — {preview.filename}</h3>
             <div className="spacer" />
             <button className="btn" onClick={() => setPreview(null)}>Cancel</button>
-            <button className="btn primary" disabled={busy || preview.already_imported} onClick={commit}>
-              {preview.replaces_existing ? `Replace ${preview.snapshot_date} snapshot` : `Import as ${preview.snapshot_date}`}
-            </button>
+            {preview.already_imported ? (
+              <button className="btn primary" disabled={busy} onClick={() => commit(true)}>
+                Re-read this file anyway
+              </button>
+            ) : (
+              <button className="btn primary" disabled={busy} onClick={() => commit(false)}>
+                {preview.replaces_existing ? `Replace ${preview.snapshot_date} snapshot` : `Import as ${preview.snapshot_date}`}
+              </button>
+            )}
           </div>
           <div style={{ padding: '14px 16px' }}>
             <dl className="kv">
@@ -309,7 +315,11 @@ export function Imports({ refresh }: { refresh: () => void }) {
               <dt>New SKUs</dt><dd>{preview.new_skus.length}</dd>
             </dl>
             {preview.already_imported && (
-              <div className="banner" style={{ marginTop: 10, borderRadius: 6 }}>This exact file has already been imported.</div>
+              <div className="banner" style={{ marginTop: 10, borderRadius: 6 }}>
+                This exact file has already been imported, so there is normally nothing to do. Use
+                <b> Re-read this file anyway</b> when the tool has been updated to read a column it used to
+                ignore — the file is unchanged, but the numbers it produces are not.
+              </div>
             )}
             {preview.replaces_existing && !preview.already_imported && (
               <div className="banner" style={{ marginTop: 10, borderRadius: 6 }}>
