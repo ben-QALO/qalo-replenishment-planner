@@ -1,5 +1,6 @@
 import type {
   EngineInput, EngineOutput, EngineSummary, SkuResult, SkuSettings, SnapshotLine, TemplateParams,
+  WearableRollup,
 } from './types.ts';
 import { resolveVelocity } from './velocity.ts';
 import {
@@ -7,6 +8,7 @@ import {
   fbaRopDays, poRopDays, fbaTargetDays, poTargetDays, chinaLeadDays, COVER_CAP,
 } from './replenishment.ts';
 import { recommendTransfer, recommendPo, projectDoNothing } from './projection.ts';
+import { buildWearablePlans, type WearableSkuInput } from './wearable.ts';
 import { assignStatus } from './status.ts';
 import { addDays, diffDays } from './dates.ts';
 
@@ -116,10 +118,14 @@ export function computeRecommendations(input: EngineInput, today: string): Engin
     // they must NEVER get a warehouse→FBA transfer. Their demand still folds onto the FBA SKU
     // of the same ASIN (see import/attribute-demand.ts), so the product is planned there.
     const isFbm = settings?.fulfillment_channel === 'fbm';
+    // WEARABLE: the shared warehouse number is untrusted, so size the transfer to the full FBA
+    // top-up need (uncapped by warehouse). WEARABLE also gets NO prescriptive China PO — its
+    // ordering lives in the informative rolling-12-month report (attached after the loop).
+    const isWearable = settings?.category === 'wearable';
     const transfer = planning && !isFbm && vel.velocity !== null && vel.velocity > 0 && !suppressShip
-      ? recommendTransfer(vel.velocity, positions.fba_available, positions.fba_coming, positions.warehouse_on_hand, template, settings)
+      ? recommendTransfer(vel.velocity, positions.fba_available, positions.fba_coming, positions.warehouse_on_hand, template, settings, { ignoreWarehouseCap: isWearable })
       : { required: 0, safe: 0, shortage: 0, recommended_ship_qty: 0 };
-    const po = planning && vel.velocity !== null && vel.velocity > 0 && !overstocked
+    const po = planning && !isWearable && vel.velocity !== null && vel.velocity > 0 && !overstocked
       ? recommendPo(vel.velocity, positions.total_pipeline, positions.fba_position, template, settings, today)
       : { recommended_po_qty: 0, need_by_arrival: null, place_by_date: null, flags: [] };
     if (transfer.shortage > 0) flags.push('WAREHOUSE_SHORT');
@@ -247,7 +253,42 @@ export function computeRecommendations(input: EngineInput, today: string): Engin
       include_in_plans: classification === 'replenishable' && canPlan && !consolidatedInto,
       amazon_days_of_supply: line?.amazon_days_of_supply ?? null,
       amazon_min_inventory_level: line?.amazon_min_inventory_level ?? null,
+      category: isWearable ? 'wearable' : 'core',
+      wearable_report: null,
     });
+  }
+
+  // WEARABLE informative plan: split the aggregate smart-ring forecast across the variants by
+  // velocity share, derive the sizing kit as an attach product, and attach a rolling-12-month
+  // report to each WEARABLE SKU (plus a portfolio rollup). CORE results are untouched.
+  let wearableRollup: WearableRollup | null = null;
+  const forecast = input.wearableForecast;
+  if (forecast && forecast.monthlyUnits && forecast.monthlyUnits.length > 0) {
+    const wInputs: WearableSkuInput[] = [];
+    for (const r of results) {
+      if (r.category !== 'wearable') continue;
+      const role = input.skuSettings[r.sku]?.wearable_role;
+      if (role !== 'smart_ring' && role !== 'sizing_kit') continue;
+      wInputs.push({
+        sku: r.sku, role, velocity: r.velocity, fba_position: r.fba_position, template: r.template,
+        case_pack: input.skuSettings[r.sku]?.case_pack, attach_rate_override: input.skuSettings[r.sku]?.attach_rate_override,
+      });
+    }
+    if (wInputs.some(i => i.role === 'smart_ring')) {
+      const { reports, rollup, noSplitSignal } = buildWearablePlans(
+        wInputs, { year: forecast.year, monthlyUnits: forecast.monthlyUnits }, today,
+      );
+      for (const r of results) {
+        const report = reports[r.sku];
+        if (!report) continue;
+        r.wearable_report = report;
+        if (noSplitSignal) r.flags = [...new Set([...r.flags, 'WEARABLE_NO_SPLIT_SIGNAL'])];
+        else if (!report.is_attach_product && report.variant_share === 0) {
+          r.flags = [...new Set([...r.flags, 'WEARABLE_ZERO_SHARE'])];
+        }
+      }
+      wearableRollup = rollup;
+    }
   }
 
   results.sort((a, b) =>
@@ -278,7 +319,7 @@ export function computeRecommendations(input: EngineInput, today: string): Engin
     }
   }
 
-  return { snapshotDate: input.snapshotDate, today, results, summary };
+  return { snapshotDate: input.snapshotDate, today, results, summary, wearableRollup };
 }
 
 const round2 = (n: number): number => Math.round(n * 100) / 100;

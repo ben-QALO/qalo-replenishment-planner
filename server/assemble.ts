@@ -151,6 +151,9 @@ export function assembleEngineInput(db: Database.Database, overrideTemplateId?: 
       template_override: templateOverride?.params ?? null,
       template_override_name: templateOverride?.name ?? null,
       param_overrides: r.param_overrides ? JSON.parse(r.param_overrides) : null,
+      category: r.category === 'wearable' ? 'wearable' : 'core',
+      wearable_role: r.wearable_role === 'smart_ring' || r.wearable_role === 'sizing_kit' ? r.wearable_role : null,
+      attach_rate_override: r.attach_rate_override ?? null,
     };
   }
 
@@ -257,6 +260,20 @@ export function assembleEngineInput(db: Database.Database, overrideTemplateId?: 
   const active = templateParamsById(db, activeId);
   if (!active) return null;
 
+  // WEARABLE aggregate forecast: the latest year's 12 monthly Amazon-basis numbers, plus the
+  // smart-ring variants it splits across and the sizing kit (the attach product). Null when unset.
+  const forecastRows = db.prepare('SELECT year, month, units FROM wearable_forecast ORDER BY year DESC, month ASC')
+    .all() as { year: number; month: number; units: number }[];
+  let wearableForecast: EngineInput['wearableForecast'] = null;
+  if (forecastRows.length > 0) {
+    const year = forecastRows[0].year;
+    const monthlyUnits = Array(12).fill(0);
+    for (const r of forecastRows) if (r.year === year) monthlyUnits[r.month - 1] = r.units;
+    const smartRingSkus = skuRows.filter(r => r.category === 'wearable' && r.wearable_role === 'smart_ring').map(r => r.sku);
+    const kit = skuRows.find(r => r.category === 'wearable' && r.wearable_role === 'sizing_kit');
+    wearableForecast = { year, monthlyUnits, smartRingSkus, sizingKitSku: kit?.sku ?? null };
+  }
+
   return {
     snapshotDate: snapshot.snapshot_date,
     lines,
@@ -274,6 +291,7 @@ export function assembleEngineInput(db: Database.Database, overrideTemplateId?: 
     stockoutDays: computeStockoutDays(db, snapshot.snapshot_date),
     inTransitToFba,
     externalDemand,
+    wearableForecast,
   };
 }
 

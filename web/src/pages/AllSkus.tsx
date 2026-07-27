@@ -65,7 +65,8 @@ export function AllSkus({ data, refresh, openSku, initialStatus, initialFlag }: 
         patch.growth_multiplier = null;
         patch.template_override_id = null;
         patch.param_overrides = null;
-      } else if (bulkField === 'classification' || bulkField === 'fulfillment_channel') {
+      } else if (bulkField === 'classification' || bulkField === 'fulfillment_channel'
+        || bulkField === 'category' || bulkField === 'wearable_role') {
         patch[bulkField] = bulkValue;
       } else {
         const n = Number(bulkValue);
@@ -193,10 +194,14 @@ export function AllSkus({ data, refresh, openSku, initialStatus, initialFlag }: 
             setBulkField(e.target.value);
             if (e.target.value === 'classification') setBulkValue('replenishable');
             else if (e.target.value === 'fulfillment_channel') setBulkValue('fbm');
+            else if (e.target.value === 'category') setBulkValue('wearable');
+            else if (e.target.value === 'wearable_role') setBulkValue('smart_ring');
             else setBulkValue('');
           }}>
             <option value="classification">Classify as</option>
             <option value="fulfillment_channel">Set fulfillment</option>
+            <option value="category">Set family (CORE/WEARABLE)</option>
+            <option value="wearable_role">Set wearable role</option>
             <option value="case_pack">Set case pack</option>
             <option value="moq">Set MOQ</option>
             <option value="order_multiple">Set order multiple</option>
@@ -212,6 +217,17 @@ export function AllSkus({ data, refresh, openSku, initialStatus, initialFlag }: 
             <select value={bulkValue} onChange={e => setBulkValue(e.target.value)}>
               <option value="fba">FBA</option>
               <option value="fbm">FBM</option>
+            </select>
+          ) : bulkField === 'category' ? (
+            <select value={bulkValue} onChange={e => setBulkValue(e.target.value)}>
+              <option value="core">CORE — silicone</option>
+              <option value="wearable">WEARABLE — smart ring / kit</option>
+            </select>
+          ) : bulkField === 'wearable_role' ? (
+            <select value={bulkValue} onChange={e => setBulkValue(e.target.value)}>
+              <option value="smart_ring">Smart ring</option>
+              <option value="sizing_kit">Sizing kit</option>
+              <option value="">None</option>
             </select>
           ) : bulkField !== 'clear_overrides' ? (
             <input type="number" step="any" placeholder="value" value={bulkValue} onChange={e => setBulkValue(e.target.value)} style={{ width: 90 }} />

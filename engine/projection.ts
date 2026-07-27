@@ -20,7 +20,7 @@ import type { TemplateParams, SkuSettings } from './types.ts';
 import { addDays } from './dates.ts';
 import { chinaLeadDays, poTargetDays, derivedPoTargetDays, fbaTargetDays } from './replenishment.ts';
 
-const ceilTo = (qty: number, m: number | null | undefined): number => {
+export const ceilTo = (qty: number, m: number | null | undefined): number => {
   const mult = m && m > 1 ? m : 1;
   return (Math.ceil(qty / mult - 1e-9) * mult) || 0;   // `|| 0` normalizes -0 → 0
 };
@@ -29,7 +29,7 @@ const ceilTo = (qty: number, m: number | null | undefined): number => {
 // settles to one 50-case (not 100) while 75 still rounds up to 100 — avoids burying slow movers in
 // a spare case for being barely over a line. The MOQ floor still applies before this, so the result
 // is never below one case. Transfers keep ceilTo (whole cases; too-slow SKUs ship nothing to FBA).
-const roundTo = (qty: number, m: number | null | undefined): number => {
+export const roundTo = (qty: number, m: number | null | undefined): number => {
   const mult = m && m > 1 ? m : 1;
   return (Math.floor(qty / mult + 0.5) * mult) || 0;   // `|| 0` normalizes -0 → 0
 };
@@ -62,6 +62,7 @@ export function recommendTransfer(
   warehouseOnHand: number,
   t: TemplateParams,
   settings: SkuSettings | undefined,
+  opts?: { ignoreWarehouseCap?: boolean },
 ): TransferRec {
   const fbaTargetUnits = Math.round(velocity * t.fba_target_cover_days);
   // Never ship to FBA when it already holds its goal (in days) or more. Without this,
@@ -97,6 +98,13 @@ export function recommendTransfer(
     return { required: 0, safe: 0, shortage: 0, recommended_ship_qty: 0, too_slow_for_fba: true };
   }
   const required = ceilTo(rawNeed, cp);
+
+  // WEARABLE: the physical warehouse number is shared across retail/Shopify/Amazon and is not
+  // trusted for planning, so don't cap the top-up against it — ship the full whole-case need and
+  // report no shortage (the team reconciles the actual pick from what's physically free).
+  if (opts?.ignoreWarehouseCap) {
+    return { required, safe: required, shortage: 0, recommended_ship_qty: required };
+  }
 
   // Warehouse spare. The reserve is a SOFT floor a rescue may ship into so Amazon never goes dark.
   const bufferUnits = Math.round(velocity * t.warehouse_buffer_days);

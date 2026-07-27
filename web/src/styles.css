@@ -584,3 +584,35 @@ tr.ship-group td { padding: 0; background: var(--surface-2); border-bottom: 1px 
     animation: none !important; transition: none !important;
   }
 }
+
+/* ── CORE / WEARABLE (smart-ring planning) ─────────────────────────────────── */
+.family-toggle { margin: 4px 0 18px; }
+.family-toggle .segmented { padding: 4px; }
+.family-toggle .segmented button { padding: 9px 20px; font-size: 13px; font-weight: 600; flex-direction: column; gap: 1px; align-items: flex-start; border-bottom: 2px solid transparent; }
+.family-toggle .segmented button.on { border-bottom-color: var(--seg-c, var(--accent)); }
+.family-toggle .fam-sub { font-family: var(--sans); font-size: 10px; font-weight: 400; color: var(--muted); letter-spacing: .02em; }
+
+.segmented.sm button { padding: 4px 10px; font-size: 11.5px; }
+
+.wear { padding: 2px 2px 4px; }
+.wear-intro { display: flex; gap: 16px; align-items: flex-start; padding: 4px 2px 12px; border-bottom: 1px solid var(--hairline); margin-bottom: 14px; }
+.wear-intro p { font-size: 12.5px; line-height: 1.55; color: var(--ink-2); margin: 0; flex: 1; }
+.wear-intro .btn { flex-shrink: 0; }
+.wear-section-title { display: flex; align-items: center; gap: 10px; font-family: var(--display); font-size: 11.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 6px 0 8px; }
+.wear-section-title .spacer { flex: 1; }
+.wear-variants, .wear-months { width: 100%; }
+.wear-tag { display: inline-block; font-family: var(--mono); font-size: 9.5px; text-transform: uppercase; letter-spacing: .05em; color: var(--grad-purple); background: color-mix(in srgb, var(--grad-purple) 16%, transparent); padding: 1px 5px; border-radius: 5px; margin-left: 6px; vertical-align: middle; }
+.wear-months .wear-tag { color: var(--muted); background: var(--surface-2); }
+.wear-up { color: var(--grad-teal); font-weight: 600; }
+.wear-down { color: var(--muted); font-weight: 600; }
+.wear-note { font-size: 11.5px; line-height: 1.5; color: var(--muted); margin: 8px 2px 2px; max-width: 780px; }
+
+.card-inset { background: var(--surface-2); border: 1px solid var(--hairline); border-radius: var(--r-sm); padding: 14px; margin-bottom: 16px; }
+.wear-forecast-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+.wear-forecast-head .spacer { flex: 1; }
+.wear-forecast-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; }
+.wear-fc-cell { display: flex; flex-direction: column; gap: 3px; font-family: var(--mono); font-size: 10.5px; color: var(--muted); }
+.wear-fc-cell input { width: 100%; text-align: right; }
+.wear-forecast-foot { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
+.wear-forecast-foot .spacer { flex: 1; }
+@media (max-width: 720px) { .wear-forecast-grid { grid-template-columns: repeat(3, 1fr); } .wear-intro { flex-direction: column; } }

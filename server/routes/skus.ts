@@ -9,10 +9,13 @@ const PATCHABLE = [
   'classification', 'case_pack', 'moq', 'order_multiple',
   'velocity_override', 'growth_multiplier', 'template_override_id', 'notes',
   'asin', 'fulfillment_channel',
+  'category', 'wearable_role', 'attach_rate_override',
 ] as const;
 
 const CLASSIFICATIONS = ['unclassified', 'replenishable', 'watch', 'discontinued', 'ignore'];
 const CHANNELS = ['fba', 'fbm'];
+const CATEGORIES = ['core', 'wearable'];
+const WEARABLE_ROLES = ['smart_ring', 'sizing_kit'];
 
 function applyPatch(sku: string, patch: Record<string, unknown>): boolean {
   const db = getDb();
@@ -24,6 +27,10 @@ function applyPatch(sku: string, patch: Record<string, unknown>): boolean {
     if (field === 'classification' && !CLASSIFICATIONS.includes(String(v))) continue;
     // Fulfillment channel is constrained; blank is not allowed (defaults to 'fba').
     if (field === 'fulfillment_channel') { const c = String(v).toLowerCase(); if (!CHANNELS.includes(c)) continue; v = c; }
+    // Category is constrained; blank defaults to 'core'. wearable_role is optional (blank → null).
+    if (field === 'category') { const c = String(v).toLowerCase(); v = CATEGORIES.includes(c) ? c : 'core'; }
+    if (field === 'wearable_role') { const c = String(v).toLowerCase(); if (v !== '' && v != null && !WEARABLE_ROLES.includes(c)) continue; v = WEARABLE_ROLES.includes(c) ? c : null; }
+    if (field === 'attach_rate_override') { if (v === '' || v == null) v = null; else { const n = Number(v); if (!Number.isFinite(n) || n < 0) continue; v = n; } }
     if (field === 'asin' && typeof v === 'string') v = v.trim().toUpperCase() || null;
     if (v === '' || v === undefined) v = null;
     sets.push(`${field} = ?`);
@@ -48,7 +55,7 @@ export function skuRoutes(app: FastifyInstance): void {
     if (!output) return { results: [], summary: null, snapshotDate: null };
     // Attach editable settings so the table can render current values.
     const db = getDb();
-    const settingsRows = db.prepare('SELECT sku, classification, case_pack, moq, order_multiple, velocity_override, growth_multiplier, template_override_id, param_overrides, notes FROM skus').all() as any[];
+    const settingsRows = db.prepare('SELECT sku, classification, case_pack, moq, order_multiple, velocity_override, growth_multiplier, template_override_id, param_overrides, notes, category, wearable_role, attach_rate_override FROM skus').all() as any[];
     const settings: Record<string, any> = {};
     for (const r of settingsRows) {
       settings[r.sku] = { ...r, param_overrides: r.param_overrides ? JSON.parse(r.param_overrides) : null };
