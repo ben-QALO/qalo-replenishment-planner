@@ -1,0 +1,11 @@
+-- Amazon's FBA export carries a `fc-transfer` column: units Amazon has ALREADY taken in and is
+-- moving between its own fulfilment centres. They are at Amazon, already paid for, and will become
+-- sellable within days — but the importer never mapped the column, so the tool treated them as
+-- non-existent. On a real 604-row export that hid 10,253 units across 364 SKUs — about a third of
+-- all available stock (e.g. MFL10: 409 available, 1,447 in FC transfer) — which made the whole
+-- catalogue look far emptier than it is and drove systematic over-ordering.
+--
+-- Stored separately from the three inbound-from-us columns because it is a different thing: those
+-- are shipments WE sent that Amazon has not received; this is stock Amazon already holds. Both count
+-- toward "coming to sellable", so computePositions folds it into fba_coming.
+ALTER TABLE snapshot_lines ADD COLUMN fc_transfer INTEGER NOT NULL DEFAULT 0;

@@ -119,6 +119,7 @@ export function SkuDetail({ sku, today, templates, refresh }: {
                   <dt>Available at FBA</dt><dd>{fmtInt(r.fba_available)}</dd>
                   <dt>Reserved</dt><dd>{fmtInt(r.fba_reserved)}</dd>
                   <dt>Heading to Amazon (inbound)</dt><dd>{fmtInt(r.fba_inbound)}</dd>
+                  <dt title="Amazon already has these — they're moving between its warehouses and become sellable within days">Moving between Amazon FCs</dt><dd>{fmtInt(r.fc_transfer)}</dd>
                   <dt>Warehouse on hand</dt><dd>{fmtInt(r.warehouse_on_hand)}</dd>
                   <dt>On open POs</dt><dd>{fmtInt(r.open_po_units)}</dd>
                   <dt>Total pipeline</dt><dd><b>{fmtInt(r.total_pipeline)}</b></dd>

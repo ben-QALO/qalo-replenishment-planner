@@ -53,10 +53,10 @@ export function commitSnapshot(db: Database.Database, input: CommitInput): Commi
     }
 
     const insertLine = db.prepare(`INSERT INTO snapshot_lines
-      (snapshot_id, sku, fnsku, asin, condition, available, inbound_working, inbound_shipped, inbound_received,
+      (snapshot_id, sku, fnsku, asin, condition, available, inbound_working, inbound_shipped, inbound_received, fc_transfer,
        reserved, unfulfillable, units_shipped_t7, units_shipped_t30, units_shipped_t60, units_shipped_t90,
        amazon_days_of_supply, amazon_min_inventory_level, your_price, raw, flags)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
 
     const skuExists = db.prepare('SELECT sku FROM skus WHERE sku = ?');
     const insertSku = db.prepare(`INSERT INTO skus (sku, asin, fnsku, title, classification, first_seen_at, updated_at)
@@ -73,7 +73,7 @@ export function commitSnapshot(db: Database.Database, input: CommitInput): Commi
       }
       insertLine.run(
         snapshotId, l.sku, l.fnsku, l.asin, l.condition,
-        l.available, l.inbound_working, l.inbound_shipped, l.inbound_received,
+        l.available, l.inbound_working, l.inbound_shipped, l.inbound_received, l.fc_transfer ?? 0,
         l.reserved, l.unfulfillable,
         l.units_shipped_t7, l.units_shipped_t30, l.units_shipped_t60, l.units_shipped_t90,
         l.amazon_days_of_supply, l.amazon_min_inventory_level, l.your_price,

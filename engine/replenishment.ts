@@ -7,6 +7,7 @@ export interface Positions {
   fba_available: number;
   fba_reserved: number;
   fba_inbound: number;      // Amazon's reported inbound (working+shipped+received)
+  fc_transfer: number;      // at Amazon, moving between its fulfilment centres
   in_transit_to_fba: number; // open warehouse→FBA transfers not yet reconciled
   fba_coming: number;       // max(amazon inbound, in-transit) — each unit counted once
   fba_position: number;     // available + reserved + fba_coming
@@ -25,16 +26,22 @@ export function computePositions(
   const available = line?.available ?? 0;
   const reserved = line?.reserved ?? 0;
   const amazonInbound = (line?.inbound_working ?? 0) + (line?.inbound_shipped ?? 0) + (line?.inbound_received ?? 0);
+  // Units Amazon ALREADY holds but is moving between its own fulfilment centres. They are not
+  // sellable today, yet they are at Amazon, paid for, and become sellable within days — so they
+  // belong in the FBA position exactly like inbound does. Ignoring them made a real catalogue look
+  // a third emptier than it was (10,253 hidden units across 364 SKUs) and drove over-ordering.
+  const fcTransfer = line?.fc_transfer ?? 0;
   // inTransitToFba is already netted upstream (engine/transfers.ts) to the units Amazon has
   // NOT yet taken in since the transfer submitted — so it's disjoint from amazonInbound and
   // from available. Summing therefore counts each in-flight unit exactly once.
-  const fba_coming = amazonInbound + inTransitToFba;
+  const fba_coming = amazonInbound + fcTransfer + inTransitToFba;
   const fba_position = available + reserved + fba_coming;
   const open_po_units = poLines.reduce((s, l) => s + Math.max(0, l.qty_outstanding), 0);
   return {
     fba_available: available,
     fba_reserved: reserved,
     fba_inbound: amazonInbound,
+    fc_transfer: fcTransfer,
     in_transit_to_fba: inTransitToFba,
     fba_coming,
     fba_position,

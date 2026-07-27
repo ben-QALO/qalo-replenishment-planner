@@ -18,6 +18,8 @@ export const FBA_DICTIONARY: Record<string, string[]> = {
   inbound_shipped: ['inbound-shipped', 'afn-inbound-shipped-quantity'],
   inbound_received: ['inbound-received', 'inbound-receiving', 'afn-inbound-receiving-quantity'],
   inbound_total: ['inbound-quantity'],
+  // Units Amazon already holds, moving between its own FCs. Real, near-sellable stock.
+  fc_transfer: ['fc-transfer', 'afn-researching-quantity'],
   reserved: ['total-reserved-quantity', 'afn-reserved-quantity', 'reserved-quantity', 'reserved'],
   unfulfillable: ['unfulfillable-quantity', 'afn-unsellable-quantity', 'unsellable-quantity'],
   units_shipped_t7: ['units-shipped-t7', 'units-shipped-last-7-days'],
