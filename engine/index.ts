@@ -8,7 +8,7 @@ import {
   fbaRopDays, poRopDays, fbaTargetDays, poTargetDays, chinaLeadDays, COVER_CAP,
 } from './replenishment.ts';
 import { recommendTransfer, recommendPo, projectDoNothing } from './projection.ts';
-import { buildWearablePlans, type WearableSkuInput } from './wearable.ts';
+import { buildWearablePlans, wearableTransferRates, type WearableSkuInput, type WearableRateInput } from './wearable.ts';
 import { assignStatus } from './status.ts';
 import { addDays, diffDays } from './dates.ts';
 
@@ -51,6 +51,30 @@ export function computeRecommendations(input: EngineInput, today: string): Engin
   // Every SKU that exists anywhere: in the snapshot or already known to the app.
   const allSkus = new Set<string>([...bySku.keys(), ...Object.keys(input.skuSettings)]);
   const results: SkuResult[] = [];
+
+  // WEARABLE transfers are sized against the FORECAST, not trailing sales (a smart ring's season
+  // turns faster than a 5-week transfer leg, so trailing sales ship for the season you're leaving).
+  // The forecast splits by trailing-velocity share, so resolve those few velocities up front.
+  const wearableTransferRate: Record<string, number> = (() => {
+    const fc = input.wearableForecast;
+    if (!fc?.monthlyUnits?.length) return {};
+    const rateInputs: WearableRateInput[] = [];
+    for (const sku of allSkus) {
+      const st = input.skuSettings[sku];
+      if (st?.category !== 'wearable') continue;
+      if (st.wearable_role !== 'smart_ring' && st.wearable_role !== 'sizing_kit') continue;
+      const { template } = resolveTemplate(st, input.globalTemplate, input.globalTemplateName);
+      const v = resolveVelocity(
+        bySku.get(sku) ?? null, st, input.weights, input.globalGrowthMultiplier,
+        input.stockoutCorrection, input.stockoutDays?.[sku], input.externalDemand?.[sku],
+      );
+      rateInputs.push({
+        sku, role: st.wearable_role, velocity: v.velocity, template,
+        attach_rate_override: st.attach_rate_override,
+      });
+    }
+    return wearableTransferRates(rateInputs, { year: fc.year, monthlyUnits: fc.monthlyUnits }, today);
+  })();
 
   for (const sku of allSkus) {
     const line = bySku.get(sku) ?? null;
@@ -122,9 +146,14 @@ export function computeRecommendations(input: EngineInput, today: string): Engin
     // top-up need (uncapped by warehouse). WEARABLE also gets NO prescriptive China PO — its
     // ordering lives in the informative rolling-12-month report (attached after the loop).
     const isWearable = settings?.category === 'wearable';
-    const transfer = planning && !isFbm && vel.velocity !== null && vel.velocity > 0 && !suppressShip
-      ? recommendTransfer(vel.velocity, positions.fba_available, positions.fba_coming, positions.warehouse_on_hand, template, settings, { ignoreWarehouseCap: isWearable })
+    // WEARABLE: size the shipment on forecast demand for the window it will cover once it lands,
+    // so it ships INTO a season rather than trailing it. Falls back to trailing sales if no forecast.
+    const forecastRate = isWearable ? wearableTransferRate[sku] : undefined;
+    const shipVelocity = forecastRate && forecastRate > 0 ? forecastRate : vel.velocity;
+    const transfer = planning && !isFbm && shipVelocity !== null && shipVelocity > 0 && !suppressShip
+      ? recommendTransfer(shipVelocity, positions.fba_available, positions.fba_coming, positions.warehouse_on_hand, template, settings, { ignoreWarehouseCap: isWearable })
       : { required: 0, safe: 0, shortage: 0, recommended_ship_qty: 0 };
+    if (forecastRate && forecastRate > 0 && transfer.recommended_ship_qty > 0) flags.push('FORECAST_SIZED');
     const po = planning && !isWearable && vel.velocity !== null && vel.velocity > 0 && !overstocked
       ? recommendPo(vel.velocity, positions.total_pipeline, positions.fba_position, template, settings, today)
       : { recommended_po_qty: 0, need_by_arrival: null, place_by_date: null, flags: [] };
@@ -188,9 +217,12 @@ export function computeRecommendations(input: EngineInput, today: string): Engin
     });
 
     // Make the correction visible in the audit sentence so it's never a black box.
-    const why = flags.includes('STOCKOUT_CORRECTED')
+    let why = flags.includes('STOCKOUT_CORRECTED')
       ? `${whyBase} (Velocity uses this item's in-stock sales rate, not the stocked-out average, so it isn't under-ordered.)`
       : whyBase;
+    if (flags.includes('FORECAST_SIZED')) {
+      why += ` (Smart ring: the shipment is sized on your forecast for the weeks it will cover once it lands — about ${round2(forecastRate as number)}/day — not on recent sales.)`;
+    }
 
     // Revenue-at-risk proxy: daily velocity × price × how deep the problem is.
     const depth = status === 'STOCKOUT' ? 30 : status === 'CRITICAL' ? Math.max(gapDays, 7)

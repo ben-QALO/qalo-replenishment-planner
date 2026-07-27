@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { recommendTransfer } from '../projection.ts';
-import { buildWearablePlans, type WearableSkuInput } from '../wearable.ts';
+import { buildWearablePlans, wearableTransferRates, type WearableSkuInput, type WearableRateInput } from '../wearable.ts';
 import { settings } from './helpers.ts';
 import type { TemplateParams } from '../types.ts';
 
@@ -122,6 +122,57 @@ test('monthly plan: no actual sales → null multiplier, and forecast months pas
   assert.equal(r.multiplier, null);                          // no actual signal
   assert.equal(r.months[0].flags, undefined);                // Nov 2026, within the year
   assert.ok(r.months[2].flags?.includes('FORECAST_EXTRAPOLATED'));  // Jan 2027
+});
+
+// ── forecast-sized FBA transfers ──────────────────────────────────────────────
+
+const rateInput = (sku: string, velocity: number | null, role: 'smart_ring' | 'sizing_kit' = 'smart_ring',
+  extra: Partial<WearableRateInput> = {}): WearableRateInput =>
+  ({ sku, role, velocity, template: WEARABLE, ...extra });
+
+test('transfer rate: sized on the forecast for the window the shipment will cover', () => {
+  // Flat 930/mo aggregate, single ring. Trailing velocity is only 1/day, so a rate near 30
+  // proves the FORECAST — not recent sales — drives the shipment.
+  // Shipping from Jan 15 lands Feb 19 and covers 60 days (into April), so the average sits a
+  // little above 930/31: a flat MONTHLY figure is a higher DAILY rate in short months
+  // (Feb = 930/28 ≈ 33.2/day). ~30.9 is the day-count-weighted average, and that's correct.
+  const rates = wearableTransferRates([rateInput('R', 1)], { year: 2026, monthlyUnits: flat(930) }, '2026-01-15');
+  assert.ok(rates['R'] > 29 && rates['R'] < 34, `expected ~31/day, got ${rates['R']}`);
+});
+
+test('transfer rate: ramps INTO a seasonal peak instead of trailing it', () => {
+  // Quiet all year (300/mo ≈ 10/day) except a Nov/Dec peak (3000/mo ≈ 100/day).
+  const seasonal = [300, 300, 300, 300, 300, 300, 300, 300, 300, 300, 3000, 3000];
+  const inputs = [rateInput('R', 10)];   // trailing sales are stuck at the quiet-season 10/day
+
+  // Late September: the 35-day leg lands in early November, so the shipment must already be
+  // sized for peak demand — far above the 10/day the SKU is actually selling right now.
+  const sept = wearableTransferRates(inputs, { year: 2026, monthlyUnits: seasonal }, '2026-09-25');
+  assert.ok(sept['R'] > 50, `late-Sept shipment should be sized for the Nov peak, got ${sept['R']}/day`);
+
+  // Mid-January: nothing but quiet months ahead, so it settles back to the quiet rate.
+  const jan = wearableTransferRates(inputs, { year: 2026, monthlyUnits: seasonal }, '2026-01-15');
+  assert.ok(jan['R'] < 15, `January shipment should be quiet-season sized, got ${jan['R']}/day`);
+  assert.ok(sept['R'] > jan['R'] * 3, 'peak sizing must dwarf quiet-season sizing');
+});
+
+test('transfer rate: splits by variant share and derives the kit from its attach rate', () => {
+  const inputs = [
+    rateInput('SLIM-G', 3), rateInput('SLIM-S', 1),          // shares .75 / .25
+    rateInput('KIT', 0.4, 'sizing_kit'),                     // attach 0.4/4 = 0.10
+  ];
+  const rates = wearableTransferRates(inputs, { year: 2026, monthlyUnits: flat(1240) }, '2026-01-15');
+  // Assert the SHARES, which hold regardless of the window's calendar day-counts: Gold carries
+  // 3× Silver, and the kit is 0.10× the combined ring volume.
+  assert.ok(Math.abs(rates['SLIM-G'] / rates['SLIM-S'] - 3) < 0.01, `Gold:Silver should be 3:1, got ${rates['SLIM-G'] / rates['SLIM-S']}`);
+  const ringTotal = rates['SLIM-G'] + rates['SLIM-S'];
+  assert.ok(Math.abs(rates['KIT'] / ringTotal - 0.1) < 0.005, `kit should be 0.10× rings, got ${rates['KIT'] / ringTotal}`);
+});
+
+test('transfer rate: no forecast signal yields no rate, so the caller keeps trailing sales', () => {
+  assert.deepEqual(wearableTransferRates([rateInput('R', 10)], { year: 2026, monthlyUnits: flat(0) }, '2026-01-15'), {});
+  // No smart rings at all (kit only) → nothing to split, no rates.
+  assert.deepEqual(wearableTransferRates([rateInput('KIT', 5, 'sizing_kit')], { year: 2026, monthlyUnits: flat(600) }, '2026-01-15'), {});
 });
 
 // ── rollup ────────────────────────────────────────────────────────────────────

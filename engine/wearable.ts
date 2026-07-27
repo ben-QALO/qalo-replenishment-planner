@@ -19,7 +19,7 @@ import type {
 } from './types.ts';
 import { chinaLeadDays } from './replenishment.ts';
 import { ceilTo, roundTo } from './projection.ts';
-import { firstOfMonth, addMonths, monthKey, daysInMonth } from './dates.ts';
+import { firstOfMonth, addMonths, monthKey, daysInMonth, addDays } from './dates.ts';
 
 const ATTACH_CAP = 2;      // a buyer may take >1 sizing kit, but rarely many — clamp runaway ratios
 const HORIZON = 12;        // rolling months shown
@@ -46,6 +46,80 @@ const round4 = (n: number): number => Math.round(n * 10000) / 10000;
 const clamp = (n: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, n));
 const posVel = (v: number | null): number => (v !== null && v > 0 ? v : 0);
 
+/** Each smart ring's share of trailing sales; equal split when nothing is selling yet. */
+function splitShares<T extends { velocity: number | null }>(smartRings: T[]): { shareOf: (i: T) => number; noSplitSignal: boolean } {
+  const totalV = smartRings.reduce((s, i) => s + posVel(i.velocity), 0);
+  const noSplitSignal = totalV <= 0;
+  return {
+    noSplitSignal,
+    shareOf: (i: T) => (noSplitSignal ? (smartRings.length ? 1 / smartRings.length : 0) : posVel(i.velocity) / totalV),
+  };
+}
+
+/** The sizing kit's attach rate: kits sold per smart ring, learned from trailing sales unless pinned. */
+function attachRateOf(kit: { velocity: number | null; attach_rate_override?: number | null }, totalRingVelocity: number): number {
+  if (kit.attach_rate_override != null && kit.attach_rate_override >= 0) return kit.attach_rate_override;
+  if (totalRingVelocity > 0) return clamp(posVel(kit.velocity) / totalRingVelocity, 0, ATTACH_CAP);
+  return 0;
+}
+
+export interface WearableRateInput {
+  sku: string;
+  role: WearableRole;
+  velocity: number | null;
+  template: TemplateParams;
+  attach_rate_override?: number | null;
+}
+
+/**
+ * Forecast-derived daily sales rate to SIZE THE FBA TRANSFER for each WEARABLE SKU.
+ *
+ * Trailing sales are the wrong basis for a seasonal product: a transfer takes ~5 weeks to land, so
+ * sizing it on last month's sales ships for the season you're leaving, not the one you're entering
+ * (the Oct→Nov peak is exactly where that under-ships). Instead, rate the shipment against the
+ * forecast demand for the window it will actually cover: from the day it lands, through the FBA
+ * goal it's meant to hold. Returns units/day per SKU; SKUs with no forecast signal are omitted so
+ * the caller falls back to trailing velocity.
+ */
+export function wearableTransferRates(
+  inputs: WearableRateInput[],
+  forecast: { year: number; monthlyUnits: number[] },
+  today: string,
+): Record<string, number> {
+  const smartRings = inputs.filter(i => i.role === 'smart_ring');
+  const kits = inputs.filter(i => i.role === 'sizing_kit');
+  if (smartRings.length === 0) return {};
+  const { shareOf } = splitShares(smartRings);
+  const totalRingVelocity = smartRings.reduce((s, i) => s + posVel(i.velocity), 0);
+
+  // Average daily forecast demand over [start, start + days), walking real calendar months so a
+  // window that straddles a seasonal step (e.g. Oct→Nov) is weighted by actual day counts.
+  const avgDailyRate = (demandFrac: number, start: string, days: number): number => {
+    if (days <= 0 || demandFrac <= 0) return 0;
+    let total = 0;
+    for (let i = 0; i < days; i++) {
+      const d = addDays(start, i);
+      const y = Number(d.slice(0, 4));
+      const mo = Number(d.slice(5, 7));
+      const units = (forecast.monthlyUnits[mo - 1] ?? 0) * demandFrac;
+      total += units / daysInMonth(y, mo);
+    }
+    return total / days;
+  };
+
+  const rates: Record<string, number> = {};
+  const rateFor = (i: WearableRateInput, demandFrac: number) => {
+    const t = i.template;
+    const arrival = addDays(today, Math.round(t.fba_ship_checkin_days));
+    const rate = avgDailyRate(demandFrac, arrival, Math.round(t.fba_target_cover_days));
+    if (rate > 0) rates[i.sku] = rate;
+  };
+
+  for (const ring of smartRings) rateFor(ring, shareOf(ring));
+  for (const kit of kits) rateFor(kit, attachRateOf(kit, totalRingVelocity));
+  return rates;
+}
+
 /**
  * Build the rolling-12-month plan for every WEARABLE SKU.
  * @param inputs   the smart-ring variants + (optionally) the sizing kit
@@ -61,9 +135,7 @@ export function buildWearablePlans(
   const kits = inputs.filter(i => i.role === 'sizing_kit');
 
   const totalV = smartRings.reduce((s, i) => s + posVel(i.velocity), 0);
-  const noSplitSignal = totalV <= 0;
-  const shareOf = (i: WearableSkuInput): number =>
-    noSplitSignal ? (smartRings.length ? 1 / smartRings.length : 0) : posVel(i.velocity) / totalV;
+  const { shareOf, noSplitSignal } = splitShares(smartRings);
 
   const monthStart = firstOfMonth(today);
   // Resolve the aggregate forecast for report-month index `idx`, reusing the same calendar month
@@ -146,14 +218,7 @@ export function buildWearablePlans(
   for (const i of smartRings) buildFor(i, shareOf(i), false, null);
 
   for (const kit of kits) {
-    let attachRate: number;
-    if (kit.attach_rate_override != null && kit.attach_rate_override >= 0) {
-      attachRate = kit.attach_rate_override;
-    } else if (totalV > 0) {
-      attachRate = clamp(posVel(kit.velocity) / totalV, 0, ATTACH_CAP);
-    } else {
-      attachRate = 0;
-    }
+    const attachRate = attachRateOf(kit, totalV);
     buildFor(kit, attachRate, true, attachRate);
   }
 
