@@ -489,6 +489,7 @@ function Pos({ refresh }: { refresh: () => void }) {
             <button className="btn sm primary" onClick={() => placeOrder(po.id)}>Place order</button>{' '}
             <button className="btn sm" onClick={() => reopenPo(po.id)}>Send back</button>
           </>}{' '}
+          <a className="btn sm" href={`/api/pos/${po.id}/export.csv`}>⭳ Export</a>{' '}
           <button className="btn sm danger" onClick={() => cancelPo(po.id)}>Cancel</button>
         </div>
         <table className="data">
@@ -663,6 +664,7 @@ function Pos({ refresh }: { refresh: () => void }) {
                   <button className="btn sm primary" onClick={() => { setReceiving(po); setRecLines({}); setOpenPo(m => ({ ...m, [po.id]: true })); }}>Receive…</button>
                 </>
               )}
+              <a className="btn sm" href={`/api/pos/${po.id}/export.csv`}>⭳ Export</a>
               {po.status === 'draft' && <button className="btn sm danger" onClick={async () => { if (await confirmDialog({ title: 'Delete this draft PO?', confirmLabel: 'Delete', danger: true })) { await api.del(`/api/pos/${po.id}`); load(); refresh(); } }}>Delete</button>}
             </div>
             {etaEditId === po.id && (

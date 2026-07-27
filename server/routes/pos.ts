@@ -22,25 +22,53 @@ export function poRoutes(app: FastifyInstance): void {
     return { pos };
   });
 
-  // Download every PO as CSV (one row per SKU line; PO header repeated on each line).
-  app.get('/api/pos/export.csv', (_req, reply) => {
-    const db = getDb();
-    const pos = db.prepare('SELECT * FROM purchase_orders ORDER BY created_at DESC').all() as any[];
-    const lines = db.prepare('SELECT * FROM po_lines').all() as any[];
+  // Build the PO CSV for a set of POs (one row per SKU line; PO header repeated). The team hands
+  // this to the supplier/warehouse, so the QALO SKU leads (the Amazon SKU is kept for reference).
+  // po_lines may store either the Amazon SKU (proposed from the Action Center) or the QALO SKU
+  // (hand-entered): the sku_map join resolves the QALO SKU, falling back to the stored value.
+  function buildPoCsv(db: ReturnType<typeof getDb>, pos: any[]): string {
+    const ids = pos.map(p => p.id);
+    const lines = ids.length
+      ? db.prepare(`SELECT pl.*, COALESCE(m.qalo_sku, pl.sku) AS qalo_sku
+          FROM po_lines pl LEFT JOIN sku_map m ON m.amazon_sku = pl.sku
+          WHERE pl.po_id IN (${ids.map(() => '?').join(',')})`).all(...ids) as any[]
+      : [];
     const out: unknown[][] = [[
       'PO Name', 'PO Number', 'Supplier', 'Status', 'Review State',
       'Ordered Date', 'Expected Arrival', 'Received Date',
-      'SKU', 'Qty Ordered', 'Qty Received', 'Outstanding',
+      'QALO SKU', 'Amazon SKU', 'Qty Ordered', 'Qty Received', 'Outstanding',
     ]];
     for (const po of pos) {
       const head = [po.name ?? '', po.po_number ?? '', po.supplier ?? '', po.status, po.review_state ?? '',
         po.ordered_date ?? '', po.expected_arrival ?? '', po.received_date ?? ''];
       const pol = lines.filter(l => l.po_id === po.id);
-      if (pol.length === 0) { out.push([...head, '', '', '', '']); continue; }
-      for (const l of pol) out.push([...head, l.sku, l.qty_ordered, l.qty_received, l.qty_ordered - l.qty_received]);
+      if (pol.length === 0) { out.push([...head, '', '', '', '', '']); continue; }
+      for (const l of pol) out.push([...head, l.qalo_sku, l.sku, l.qty_ordered, l.qty_received, l.qty_ordered - l.qty_received]);
     }
-    const csv = toCsv(out);
+    return toCsv(out);
+  }
+
+  // Download every PO as CSV.
+  app.get('/api/pos/export.csv', (_req, reply) => {
+    const db = getDb();
+    const pos = db.prepare('SELECT * FROM purchase_orders ORDER BY created_at DESC').all() as any[];
+    const csv = buildPoCsv(db, pos);
     const filename = `purchase-orders-${today()}.csv`;
+    writeFileSync(join(DATA_DIR, 'exports', filename), csv);
+    reply.header('Content-Type', 'text/csv');
+    reply.header('Content-Disposition', `attachment; filename="${filename}"`);
+    return csv;
+  });
+
+  // Download a SINGLE PO as CSV (so the team can hand off one order at a time).
+  app.get('/api/pos/:id/export.csv', (req, reply) => {
+    const db = getDb();
+    const id = Number((req.params as { id: string }).id);
+    const po = db.prepare('SELECT * FROM purchase_orders WHERE id = ?').get(id) as any;
+    if (!po) return reply.code(404).send({ error: 'PO not found' });
+    const csv = buildPoCsv(db, [po]);
+    const slug = String(po.name ?? po.po_number ?? `po-${id}`).replace(/[^\w.-]+/g, '-').replace(/^-+|-+$/g, '').toLowerCase();
+    const filename = `po-${slug || id}-${today()}.csv`;
     writeFileSync(join(DATA_DIR, 'exports', filename), csv);
     reply.header('Content-Type', 'text/csv');
     reply.header('Content-Disposition', `attachment; filename="${filename}"`);
