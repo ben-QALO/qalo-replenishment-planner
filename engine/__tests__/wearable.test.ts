@@ -275,6 +275,52 @@ test('projection: reports Amazon’s demand on the warehouse, ignoring the share
   assert.ok(totalPull < yearDemand * 1.8, `pull ${totalPull} implausibly high vs demand ${yearDemand}`);
 });
 
+// ── the closed loop: China orders ↔ warehouse ↔ transfers ↔ FBA ───────────────
+
+test('closed loop: the ordering plan actually supports every transfer it promises', () => {
+  // The point of showing orders on the chart: prove the chain holds. Once the opening commitment
+  // (warehouse_prefill_needed) is in place, the Amazon-earmarked pool must never go under water —
+  // otherwise a transfer the plan promises would be physically impossible.
+  for (const goal of [60, 90]) {
+    const p = sim({ template: { ...WEARABLE, fba_target_cover_days: goal }, fbaAvailable: 600, horizonDays: 240 });
+    assert.ok(p.series.every(s => s.warehouse >= 0), `goal=${goal}: warehouse pool must never go negative`);
+    assert.ok(p.orders.length > 0, `goal=${goal}: expected a China ordering plan`);
+  }
+});
+
+test('closed loop: orders sit on the monthly cadence and land a full lead time later', () => {
+  const p = sim({ horizonDays: 240 });
+  assert.equal(p.po_review_period_days, 30);
+  for (const o of p.orders) {
+    assert.equal(o.day % 30, 0, `order on day ${o.day} is off the monthly cadence`);
+    assert.equal(o.arrives_day, o.day + p.lead_days, 'orders must land exactly one China lead later');
+    assert.ok(o.qty > 0);
+  }
+});
+
+test('closed loop: names the opening commitment nothing ordered today can cover', () => {
+  // Nothing ordered now lands for 90 days, so the opening stretch is served only by stock that
+  // already exists. That figure is the ask for the inventory team, and it must be enough to bridge
+  // the whole pre-arrival window on its own.
+  const p = sim({ horizonDays: 240 });
+  const pulledBeforeFirstArrival = p.transfers
+    .filter(t => t.day < p.lead_days)
+    .reduce((s, t) => s + t.qty, 0);
+  assert.ok(p.warehouse_prefill_needed > 0, 'a cold-start plan must state its opening commitment');
+  assert.ok(
+    p.warehouse_prefill_needed >= pulledBeforeFirstArrival,
+    `prefill ${p.warehouse_prefill_needed} must cover the ${pulledBeforeFirstArrival} pulled before any order lands`,
+  );
+});
+
+test('closed loop: total supply covers total demand on the warehouse', () => {
+  const p = sim({ horizonDays: 240 });
+  const pulled = p.transfers.filter(t => t.day <= 240).reduce((s, t) => s + t.qty, 0);
+  const supplied = p.warehouse_prefill_needed
+    + p.orders.filter(o => o.arrives_day <= 240).reduce((s, o) => s + o.qty, 0);
+  assert.ok(supplied >= pulled, `supply ${supplied} must cover the ${pulled} pulled from the warehouse`);
+});
+
 // ── rollup ────────────────────────────────────────────────────────────────────
 
 test('rollup: months are element-wise sums of the per-SKU months', () => {

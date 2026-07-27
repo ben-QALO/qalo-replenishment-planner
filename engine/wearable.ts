@@ -16,7 +16,7 @@
 
 import type {
   TemplateParams, WearableMonth, WearableReport, WearableRollup, WearableRole,
-  WearablePlan, WearablePlanPoint, WearableTransferEvent,
+  WearablePlan, WearablePlanPoint, WearableTransferEvent, WearableOrderEvent,
 } from './types.ts';
 import { chinaLeadDays } from './replenishment.ts';
 import { ceilTo, roundTo, recommendTransfer } from './projection.ts';
@@ -192,6 +192,11 @@ export function simulateWearableSku(opts: {
   const settings = { classification: 'replenishable' as const, case_pack: opts.casePack ?? null, moq: opts.moq ?? null };
 
   const demand = wearableDemandCurve(demandFrac, forecast, today);
+  const lead = chinaLeadDays(t);
+  const poReview = Math.max(1, Math.round(t.review_period_po_days));
+  // Transfers must be known past the display horizon, because an order placed near the end of the
+  // window is sized from the pull it will serve one lead-time later.
+  const simDays = horizonDays + lead + poReview;
 
   const series: WearablePlanPoint[] = [];
   const transfers: WearableTransferEvent[] = [];
@@ -203,7 +208,7 @@ export function simulateWearableSku(opts: {
   // (the same convention projectDoNothing uses for CORE).
   if (opts.fbaComing > 0) inFlight.push({ arrivesDay: Math.max(0, Math.round(leg / 2)), qty: opts.fbaComing });
 
-  for (let day = 0; day <= horizonDays; day++) {
+  for (let day = 0; day <= simDays; day++) {
     // 1. Arrivals land sellable.
     for (let k = inFlight.length - 1; k >= 0; k--) {
       if (inFlight[k].arrivesDay === day) { fba += inFlight[k].qty; inFlight.splice(k, 1); }
@@ -223,25 +228,83 @@ export function simulateWearableSku(opts: {
         inFlight.push({ arrivesDay, qty: calc.qty });
       }
     }
-    // 3. Record the day, then sell through it.
+    // 3. Record the day (FBA side; the supply chain behind it is filled in by pass 2), then sell.
     const dayRate = demand(day);
-    series.push({
-      day,
-      fba: Math.round(fba),
-      in_transit: Math.round(inFlight.reduce((s, f) => s + f.qty, 0)),
-      // The goal is the units needed to cover the NEXT `fba_target_cover_days` of forecast demand —
-      // the same forward-looking quantity the transfer sizing targets. (Using "today's rate × goal
-      // days" instead would draw a line the plan never aims at: coming out of a peak it stays high
-      // while real demand collapses, making a correctly-drawn-down shelf look like it's failing.)
-      goal: Math.round(sumDemand(demand, day, Math.max(1, Math.round(t.fba_target_cover_days)))),
-    });
-    if (fba <= 0 && stockoutDay < 0 && dayRate > 0) stockoutDay = day;
+    if (day <= horizonDays) {
+      series.push({
+        day,
+        fba: Math.round(fba),
+        in_transit: Math.round(inFlight.reduce((s, f) => s + f.qty, 0)),
+        warehouse: 0, on_order: 0,   // pass 2
+        // The goal is the units needed to cover the NEXT `fba_target_cover_days` of forecast demand —
+        // the same forward-looking quantity the transfer sizing targets. (Using "today's rate × goal
+        // days" instead would draw a line the plan never aims at: coming out of a peak it stays high
+        // while real demand collapses, making a correctly-drawn-down shelf look like it's failing.)
+        goal: Math.round(sumDemand(demand, day, Math.max(1, Math.round(t.fba_target_cover_days)))),
+      });
+      if (fba <= 0 && stockoutDay < 0 && dayRate > 0) stockoutDay = day;
+    }
     fba = Math.max(0, fba - dayRate);
   }
 
+  // ── PASS 2: the supply chain that has to stand behind those transfers ───────
+  // Transfers above are a REQUEST — what Amazon needs, never capped by the shared NetSuite pool.
+  // This pass asks the other half of the question: what must be ORDERED FROM CHINA, and when, for
+  // those transfers to be physically possible? Orders go on the monthly cadence and land one China
+  // lead later, so each one is sized to bring the Amazon-earmarked warehouse pool up to the pull it
+  // will have to serve, plus a safety cushion.
+  const pullOn = (d: number) => transfers.filter(tr => tr.day === d).reduce((s, tr) => s + tr.qty, 0);
+  const pullBetween = (from: number, days: number) =>
+    transfers.filter(tr => tr.day >= from && tr.day < from + days).reduce((s, tr) => s + tr.qty, 0);
+
+  const orders: WearableOrderEvent[] = [];
+  const orderArrivals = new Map<number, number>();
+  let balance = 0;                 // warehouse units earmarked for Amazon, relative to today
+  let minBalance = 0;              // how far under water it goes before new orders can land
+  const balanceByDay: number[] = [];
+  const onOrderByDay: number[] = [];
+
+  for (let day = 0; day <= simDays; day++) {
+    balance += orderArrivals.get(day) ?? 0;
+    balance -= pullOn(day);
+    if (balance < minBalance) minBalance = balance;
+
+    if (day % poReview === 0) {
+      const arrival = day + lead;
+      // What the pool will look like when this order lands: today's balance, plus everything already
+      // on the water arriving by then, minus every transfer that pulls from it in the meantime.
+      let projected = balance;
+      for (const [d, q] of orderArrivals) if (d > day && d <= arrival) projected += q;
+      projected -= pullBetween(day + 1, lead);
+      // Order up to: the pull this delivery must serve, plus a safety cushion of demand.
+      const target = pullBetween(arrival, poReview) + sumDemand(demand, arrival, Math.max(0, Math.round(t.safety_days)));
+      const qty = roundTo(Math.max(0, target - projected), opts.casePack ?? null);
+      if (qty > 0 && day <= horizonDays) {
+        orders.push({ day, date: addDays(today, day), qty, arrives_day: arrival, arrives_date: addDays(today, arrival) });
+      }
+      if (qty > 0) orderArrivals.set(arrival, (orderArrivals.get(arrival) ?? 0) + qty);
+    }
+
+    let onWater = 0;
+    for (const [d, q] of orderArrivals) if (d > day) onWater += q;
+    balanceByDay[day] = balance;
+    onOrderByDay[day] = onWater;
+  }
+
+  // Nothing ordered today can land for `lead` days, so the opening stretch can only be served by
+  // stock that already exists. Lifting the curve by that shortfall makes the displayed pool the
+  // real thing — and names the commitment the inventory team has to confirm.
+  const prefill = Math.max(0, -minBalance);
+  for (const p of series) {
+    p.warehouse = Math.round(Math.max(0, balanceByDay[p.day] + prefill));
+    p.on_order = Math.round(onOrderByDay[p.day]);
+  }
+
   return {
-    series, transfers, stockout_day: stockoutDay, horizon_days: horizonDays,
-    review_period_days: review, ship_leg_days: leg, lead_days: chinaLeadDays(t),
+    series, transfers, orders, stockout_day: stockoutDay,
+    warehouse_prefill_needed: Math.round(prefill),
+    horizon_days: horizonDays, review_period_days: review, po_review_period_days: poReview,
+    ship_leg_days: leg, lead_days: lead,
   };
 }
 

@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { api, fmtInt, fmtNum, type SkuResult } from '../api.ts';
 import { StatusBadge, Flags, toast } from '../components/ui.tsx';
 import { PlanChart, HistoryChart, type PlanData, type HistoryRow } from '../components/charts.tsx';
-import { WearablePlanChart, WearableTransferSchedule } from '../components/WearablePlanChart.tsx';
+import { WearablePlanChart, WearableTransferSchedule, WearableOrderSchedule } from '../components/WearablePlanChart.tsx';
 
 const CLASSES = ['unclassified', 'replenishable', 'watch', 'discontinued', 'ignore'];
 const PARAM_LABELS: Record<string, string> = {
@@ -171,10 +171,18 @@ export function SkuDetail({ sku, today, templates, refresh }: {
                 </div>
               </div>
               {detail.wearablePlan && (
-                <div className="card" style={{ marginTop: 16 }}>
-                  <div className="card-head"><h3>What to transfer, every {detail.wearablePlan.review_period_days} days</h3></div>
-                  <div style={{ padding: '4px 16px 14px' }}>
-                    <WearableTransferSchedule plan={detail.wearablePlan} today={today} />
+                <div className="grid-2" style={{ marginTop: 16 }}>
+                  <div className="card">
+                    <div className="card-head"><h3>Transfer to Amazon — every {detail.wearablePlan.review_period_days} days</h3></div>
+                    <div style={{ padding: '4px 16px 14px' }}>
+                      <WearableTransferSchedule plan={detail.wearablePlan} today={today} />
+                    </div>
+                  </div>
+                  <div className="card">
+                    <div className="card-head"><h3>Order from China — monthly</h3></div>
+                    <div style={{ padding: '4px 16px 14px' }}>
+                      <WearableOrderSchedule plan={detail.wearablePlan} today={today} />
+                    </div>
                   </div>
                 </div>
               )}
