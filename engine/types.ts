@@ -233,7 +233,7 @@ export interface WearableMonth {
   recommended_order: number;   // China order to PLACE that month (whole cases)
   order_lands_month: string;   // 'YYYY-MM' the placed order lands (month + lead months)
   must_be_at_warehouse_by: string;  // date the month's pull must already be at the warehouse
-  ideal_wh_for_amazon: number; // ideal units to hold at the warehouse for Amazon that month
+  warehouse_for_amazon: number; // units the plan holds at the warehouse for Amazon at this month's start
   flags?: string[];            // e.g. FORECAST_EXTRAPOLATED
 }
 
@@ -300,6 +300,8 @@ export interface WearableReport {
   lead_months: number;         // lead in whole months (round)
   ideal_wh_days: number;       // days of Amazon demand the ideal WH level covers
   ideal_wh_days_breakdown: { china_lead: number; review_period_po: number; safety: number };
+  /** Units that must already be at the warehouse for Amazon for this SKU's plan to hold. */
+  warehouse_prefill_needed: number;
   actual_run_rate_month: number;   // trailing actual, units/month (velocity × 30)
   forecast_run_rate_month: number; // near-term forecast, units/month (next 3 months mean)
   multiplier: number | null;       // forecast ÷ actual run rate (null when no actual signal)
@@ -308,6 +310,7 @@ export interface WearableReport {
 
 export interface WearableRollup {
   months: WearableMonth[];     // element-wise sums across all smart-ring + kit SKUs
+  total_prefill_needed: number;  // combined opening commitment at the warehouse
   total_multiplier: number | null;
   skus: string[];              // the SKUs included in the rollup
 }

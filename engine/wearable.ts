@@ -267,7 +267,10 @@ export function simulateWearableSku(opts: {
   for (let day = 0; day <= simDays; day++) {
     balance += orderArrivals.get(day) ?? 0;
     balance -= pullOn(day);
-    if (balance < minBalance) minBalance = balance;
+    // The opening commitment is only about the stretch BEFORE anything ordered now can land. Taking
+    // the minimum over the whole run would make it depend on how far out the caller happened to
+    // project, so the report (12 months) and the detail chart (6 months) would disagree.
+    if (day <= lead && balance < minBalance) minBalance = balance;
 
     if (day % poReview === 0) {
       const arrival = day + lead;
@@ -294,9 +297,12 @@ export function simulateWearableSku(opts: {
   // Nothing ordered today can land for `lead` days, so the opening stretch can only be served by
   // stock that already exists. Lifting the curve by that shortfall makes the displayed pool the
   // real thing — and names the commitment the inventory team has to confirm.
+  // NOT clamped at zero on purpose. If the ordering policy ever failed to keep the pool funded, a
+  // clamp would quietly hide it behind a flat line at the bottom of the chart — exactly the sort of
+  // silent failure this projection exists to expose. A negative value is a visible, testable bug.
   const prefill = Math.max(0, -minBalance);
   for (const p of series) {
-    p.warehouse = Math.round(Math.max(0, balanceByDay[p.day] + prefill));
+    p.warehouse = Math.round(balanceByDay[p.day] + prefill);
     p.on_order = Math.round(onOrderByDay[p.day]);
   }
 
@@ -350,53 +356,57 @@ export function buildWearablePlans(
     // Month-level reference figures out to HORIZON + L, so month M's order (which covers the pull
     // L months later) is defined for every displayed month.
     const N = HORIZON + L;
-    const d: number[] = [], fbaTarget: number[] = [], idealWh: number[] = [];
+    const d: number[] = [];
     const extrap: boolean[] = [], mDates: string[] = [];
     for (let m = 0; m < N; m++) {
       const f = forecastAt(m);
-      const dm = f.units * demandFrac;
-      const dim = daysInMonth(f.y, f.calMonth);
-      const rm = dim > 0 ? dm / dim : 0;
-      d.push(dm); fbaTarget.push(rm * t.fba_target_cover_days); idealWh.push(rm * idealWhDays);
+      d.push(f.units * demandFrac);
       extrap.push(f.extrapolated); mDates.push(f.mDate);
     }
 
-    // Amazon's real demand on the warehouse: simulate the actual transfer cadence and total up what
-    // each month pulls. Derived from the same projection the chart draws, so the report, the chart
-    // and the Ship-to-FBA queue are one model — not three formulas that drift apart.
+    // ONE simulation, read every way. Every figure below is looked up out of this projection — the
+    // same one the detail-page chart draws — rather than re-derived from a parallel formula. That
+    // matters: the monthly report, the chart, the every-2-weeks schedule and the Ship-to-FBA queue
+    // must agree number for number, or none of them can be trusted.
     const simDays = Math.max(0, diffDays(addMonths(monthStart, N), today));
     const plan = simulateWearableSku({
       demandFrac, forecast, fbaAvailable: i.fba_available, fbaComing: i.fba_coming,
       template: t, casePack: cp, moq: i.moq ?? null, today, horizonDays: simDays,
     });
-    const pullByMonth = new Map<string, number>();
-    for (const tr of plan.transfers) {
-      const k = monthKey(tr.date);
-      pullByMonth.set(k, (pullByMonth.get(k) ?? 0) + tr.qty);
-    }
-    const pull = (m: number): number => pullByMonth.get(monthKey(mDates[m])) ?? 0;
+
+    const sumByMonth = <T extends { date: string; qty: number }>(events: T[]) => {
+      const m = new Map<string, number>();
+      for (const e of events) m.set(monthKey(e.date), (m.get(monthKey(e.date)) ?? 0) + e.qty);
+      return m;
+    };
+    const pullByMonth = sumByMonth(plan.transfers);
+    const orderByMonth = sumByMonth(plan.orders);
+    const landsByMonth = new Map(plan.orders.map(o => [monthKey(o.date), monthKey(o.arrives_date)]));
+    // The projection's own state at the start of each month (clamped: month 0 may start before today).
+    const pointAt = (m: number) => {
+      const day = Math.max(0, diffDays(mDates[m], today));
+      return plan.series[Math.min(day, plan.series.length - 1)] ?? null;
+    };
 
     const months: WearableMonth[] = [];
     let cumulative = 0;
     for (let m = 0; m < HORIZON; m++) {
-      const landIdx = m + L;
-      // An order placed in month m lands in month m+L, so it must cover the units Amazon pulls that
-      // month, plus any growth in the ideal warehouse buffer as the season ramps up.
-      const bufferRamp = Math.max(0, idealWh[landIdx] - idealWh[landIdx - 1]);
-      const orderRaw = pull(landIdx) + bufferRamp;
+      const key = monthKey(mDates[m]);
+      const pull = pullByMonth.get(key) ?? 0;
+      const pt = pointAt(m);
       // Flag a month whose own forecast is a seasonal reuse of last year's number (past the forecast year).
       const flags: string[] = extrap[m] ? ['FORECAST_EXTRAPOLATED'] : [];
-      cumulative += pull(m);
+      cumulative += pull;
       months.push({
-        month: monthKey(mDates[m]),
+        month: key,
         forecast_demand: Math.round(d[m]),
-        fba_target_units: Math.round(fbaTarget[m]),
-        expected_transfer: pull(m),
+        fba_target_units: pt?.goal ?? 0,
+        expected_transfer: pull,
         cumulative_transfer: cumulative,
-        recommended_order: roundTo(orderRaw, cp),
-        order_lands_month: monthKey(mDates[landIdx]),
+        recommended_order: orderByMonth.get(key) ?? 0,
+        order_lands_month: landsByMonth.get(key) ?? monthKey(mDates[Math.min(m + L, N - 1)]),
         must_be_at_warehouse_by: mDates[m],
-        ideal_wh_for_amazon: Math.round(idealWh[m]),
+        warehouse_for_amazon: pt?.warehouse ?? 0,
         flags: flags.length ? flags : undefined,
       });
     }
@@ -409,6 +419,7 @@ export function buildWearablePlans(
       attach_rate: isAttach ? (attachRate === null ? null : round4(attachRate)) : null,
       lead_days: lead,
       lead_months: L,
+      warehouse_prefill_needed: plan.warehouse_prefill_needed,
       ideal_wh_days: idealWhDays,
       ideal_wh_days_breakdown: { china_lead: lead, review_period_po: t.review_period_po_days, safety: t.safety_days },
       actual_run_rate_month: Math.round(actualRunRate),
@@ -467,12 +478,12 @@ function buildRollup(reports: Record<string, WearableReport>, order: string[]): 
   const H = list[0].months.length;
   const months: WearableMonth[] = [];
   for (let m = 0; m < H; m++) {
-    let fd = 0, ft = 0, et = 0, ct = 0, ro = 0, iw = 0;
+    let fd = 0, ft = 0, et = 0, ct = 0, ro = 0, wh = 0;
     const flags = new Set<string>();
     for (const r of list) {
       const mm = r.months[m];
       fd += mm.forecast_demand; ft += mm.fba_target_units; et += mm.expected_transfer;
-      ct += mm.cumulative_transfer; ro += mm.recommended_order; iw += mm.ideal_wh_for_amazon;
+      ct += mm.cumulative_transfer; ro += mm.recommended_order; wh += mm.warehouse_for_amazon;
       (mm.flags ?? []).forEach(f => flags.add(f));
     }
     months.push({
@@ -481,10 +492,15 @@ function buildRollup(reports: Record<string, WearableReport>, order: string[]): 
       cumulative_transfer: ct,
       recommended_order: ro, order_lands_month: list[0].months[m].order_lands_month,
       must_be_at_warehouse_by: list[0].months[m].must_be_at_warehouse_by,
-      ideal_wh_for_amazon: iw, flags: flags.size ? [...flags] : undefined,
+      warehouse_for_amazon: wh, flags: flags.size ? [...flags] : undefined,
     });
   }
   const totalActual = list.reduce((s, r) => s + r.actual_run_rate_month, 0);
   const totalForecast = list.reduce((s, r) => s + r.forecast_run_rate_month, 0);
-  return { months, total_multiplier: totalActual > 0 ? round2(totalForecast / totalActual) : null, skus };
+  return {
+    months,
+    total_prefill_needed: list.reduce((s, r) => s + r.warehouse_prefill_needed, 0),
+    total_multiplier: totalActual > 0 ? round2(totalForecast / totalActual) : null,
+    skus,
+  };
 }

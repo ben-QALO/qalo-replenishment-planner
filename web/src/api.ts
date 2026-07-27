@@ -27,29 +27,34 @@ export interface WearableMonth {
   month: string; forecast_demand: number; fba_target_units: number;
   expected_transfer: number; cumulative_transfer: number;
   recommended_order: number; order_lands_month: string; must_be_at_warehouse_by: string;
-  ideal_wh_for_amazon: number; flags?: string[];
+  warehouse_for_amazon: number; flags?: string[];
 }
 export interface WearableReport {
   is_attach_product: boolean; variant_share: number; attach_rate: number | null;
   lead_days: number; lead_months: number; ideal_wh_days: number;
   ideal_wh_days_breakdown: { china_lead: number; review_period_po: number; safety: number };
+  warehouse_prefill_needed: number;
   actual_run_rate_month: number; forecast_run_rate_month: number; multiplier: number | null;
   months: WearableMonth[];
 }
 export interface WearableRollup {
-  months: WearableMonth[]; total_multiplier: number | null; skus: string[];
+  months: WearableMonth[]; total_prefill_needed: number; total_multiplier: number | null; skus: string[];
 }
 
 export interface WearableTransferEvent {
   day: number; date: string; qty: number; arrives_day: number; arrives_date: string;
 }
-export interface WearablePlanPoint { day: number; fba: number; in_transit: number; goal: number; }
+export interface WearablePlanPoint { day: number; fba: number; in_transit: number; warehouse: number; on_order: number; goal: number; }
+export interface WearableOrderEvent { day: number; date: string; qty: number; arrives_day: number; arrives_date: string; }
 export interface WearablePlan {
   series: WearablePlanPoint[];
   transfers: WearableTransferEvent[];
+  orders: WearableOrderEvent[];
   stockout_day: number;
+  warehouse_prefill_needed: number;
   horizon_days: number;
   review_period_days: number;
+  po_review_period_days: number;
   ship_leg_days: number;
   lead_days: number;
 }

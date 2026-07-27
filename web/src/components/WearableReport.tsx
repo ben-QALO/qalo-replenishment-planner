@@ -44,13 +44,13 @@ export function WearableReport({ results, rollup, refresh, openSku }: {
   function exportCsv() {
     const header = ['Month', 'Forecast demand (Amazon)', 'Units Amazon pulls from warehouse',
       'Cumulative pulled', 'Must be at warehouse by', 'China order to place', 'Order lands',
-      'Ideal warehouse held for Amazon', 'Notes'];
+      'Warehouse held for Amazon (planned)', 'Notes'];
     const label = view === 'rollup' ? 'all-smart-rings' : view;
     const lines = [header.join(',')];
     for (const m of shown) {
       lines.push([prettyMonth(m.month), m.forecast_demand, m.expected_transfer, m.cumulative_transfer,
         m.must_be_at_warehouse_by, m.recommended_order,
-        prettyMonth(m.order_lands_month), m.ideal_wh_for_amazon,
+        prettyMonth(m.order_lands_month), m.warehouse_for_amazon,
         (m.flags ?? []).includes('FORECAST_EXTRAPOLATED') ? 'forecast reuses last year' : ''].join(','));
     }
     downloadCsv(`wearable-plan-${label}.csv`, lines.join('\n'));
