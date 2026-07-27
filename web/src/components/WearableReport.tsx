@@ -42,11 +42,14 @@ export function WearableReport({ results, rollup, refresh, openSku }: {
   const lead = rows[0].wearable_report!.lead_months;
 
   function exportCsv() {
-    const header = ['Month', 'Forecast demand', 'Expected transfer to FBA', 'China order to place', 'Order lands', 'Ideal warehouse for Amazon', 'Notes'];
+    const header = ['Month', 'Forecast demand (Amazon)', 'Units Amazon pulls from warehouse',
+      'Cumulative pulled', 'Must be at warehouse by', 'China order to place', 'Order lands',
+      'Ideal warehouse held for Amazon', 'Notes'];
     const label = view === 'rollup' ? 'all-smart-rings' : view;
     const lines = [header.join(',')];
     for (const m of shown) {
-      lines.push([prettyMonth(m.month), m.forecast_demand, m.expected_transfer, m.recommended_order,
+      lines.push([prettyMonth(m.month), m.forecast_demand, m.expected_transfer, m.cumulative_transfer,
+        m.must_be_at_warehouse_by, m.recommended_order,
         prettyMonth(m.order_lands_month), m.ideal_wh_for_amazon,
         (m.flags ?? []).includes('FORECAST_EXTRAPOLATED') ? 'forecast reuses last year' : ''].join(','));
     }
@@ -129,10 +132,10 @@ export function WearableReport({ results, rollup, refresh, openSku }: {
           <thead><tr>
             <th className="plain">Month</th>
             <th className="plain num">Forecast demand</th>
-            <th className="plain num">Transfer to FBA</th>
+            <th className="plain num">Amazon pulls from WH</th>
+            <th className="plain num">Cumulative</th>
             <th className="plain num">Order from China</th>
             <th className="plain">Lands</th>
-            <th className="plain num">Ideal WH for Amazon</th>
           </tr></thead>
           <tbody>
             {shown.map(m => (
@@ -142,19 +145,20 @@ export function WearableReport({ results, rollup, refresh, openSku }: {
                     <span className="wear-tag" title="No forecast entered for this month — reuses last year's same month">est.</span>}
                 </td>
                 <td className="num">{fmtInt(m.forecast_demand)}</td>
-                <td className="num">{fmtInt(m.expected_transfer)}</td>
-                <td className="num" style={{ fontWeight: 600 }}>{m.recommended_order > 0 ? fmtInt(m.recommended_order) : '—'}</td>
+                <td className="num" style={{ fontWeight: 600 }}>{fmtInt(m.expected_transfer)}</td>
+                <td className="num" style={{ color: 'var(--muted)' }}>{fmtInt(m.cumulative_transfer)}</td>
+                <td className="num" style={{ fontWeight: 600, color: 'var(--grad-purple)' }}>{m.recommended_order > 0 ? fmtInt(m.recommended_order) : '—'}</td>
                 <td className="mono" style={{ color: 'var(--muted)', fontSize: 11.5 }}>{prettyMonth(m.order_lands_month)}</td>
-                <td className="num">{fmtInt(m.ideal_wh_for_amazon)}</td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
       <div className="wear-note">
-        <b>Order from China</b> is what to place that month so it lands ~{lead} months later (the lead time), sized to
-        cover that landing month's transfers to FBA. <b>Ideal WH for Amazon</b> is the stock you'd ideally hold at the
-        warehouse earmarked for Amazon — enough to bridge the lead time plus a monthly cycle and safety.
+        <b>Amazon pulls from WH</b> is the number to give your inventory team — the units Amazon will take out of the
+        warehouse that month, which they add to what retail and Shopify need. You never have to know the shared totals.
+        <br /><b>Order from China</b> is what to place that month so it lands ~{lead} months later, sized to cover the
+        pull in the month it arrives.
       </div>
     </div>
   );

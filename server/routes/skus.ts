@@ -3,7 +3,8 @@ import { getDb, bumpRevision, nowIso, today } from '../db/connection.ts';
 import { currentRecommendations, getSetting } from '../assemble.ts';
 import { projectPlan } from '../../engine/projection.ts';
 import { chinaLeadDays } from '../../engine/replenishment.ts';
-import { diffDays } from '../../engine/dates.ts';
+import { diffDays, addMonths, firstOfMonth } from '../../engine/dates.ts';
+import { projectWearableSku } from '../../engine/wearable.ts';
 
 const PATCHABLE = [
   'classification', 'case_pack', 'moq', 'order_multiple',
@@ -89,7 +90,7 @@ export function skuRoutes(app: FastifyInstance): void {
     // "If you follow the plan" projection — computed with the same engine functions that
     // produce the recommendations, from this SKU's current netted positions.
     let plan = null;
-    if (result && result.velocity !== null && result.velocity > 0 && result.include_in_plans) {
+    if (result && result.category !== 'wearable' && result.velocity !== null && result.velocity > 0 && result.include_in_plans) {
       const todayStr = today();
       const arrivals = (poLines as any[])
         .filter(p => (p.status === 'ordered' || p.status === 'in_transit') && p.qty_ordered > p.qty_received)
@@ -110,7 +111,36 @@ export function skuRoutes(app: FastifyInstance): void {
       );
     }
 
-    return { result, settings: row ?? null, history, poLines, planLines, warehouse, plan };
+    // WEARABLE (smart rings): the CORE day-by-day plan above doesn't apply — it sizes off trailing
+    // sales, caps against the shared warehouse pool, and replays China POs this product doesn't use.
+    // Build the forecast-driven projection instead: seasonal demand, transfers every review cycle,
+    // and the warehouse treated as unlimited (what it reports is Amazon's DEMAND on the warehouse).
+    let wearablePlan = null;
+    if (result?.category === 'wearable' && output) {
+      const fc = db.prepare('SELECT year, month, units FROM wearable_forecast ORDER BY year DESC, month ASC')
+        .all() as { year: number; month: number; units: number }[];
+      if (fc.length > 0) {
+        const year = fc[0].year;
+        const monthlyUnits = Array(12).fill(0);
+        for (const f of fc) if (f.year === year) monthlyUnits[f.month - 1] = f.units;
+        const meta = new Map((db.prepare(
+          'SELECT sku, wearable_role, case_pack, moq, attach_rate_override FROM skus WHERE category = ?',
+        ).all('wearable') as any[]).map(r => [r.sku, r]));
+        const inputs = output.results
+          .filter(r => r.category === 'wearable' && (meta.get(r.sku)?.wearable_role === 'smart_ring' || meta.get(r.sku)?.wearable_role === 'sizing_kit'))
+          .map(r => ({
+            sku: r.sku, role: meta.get(r.sku)!.wearable_role as 'smart_ring' | 'sizing_kit',
+            velocity: r.velocity, fba_available: r.fba_available, fba_coming: r.fba_coming,
+            template: r.template, case_pack: meta.get(r.sku)?.case_pack ?? null,
+            moq: meta.get(r.sku)?.moq ?? null, attach_rate_override: meta.get(r.sku)?.attach_rate_override ?? null,
+          }));
+        // 6 months out — two China lead times, enough to see the next seasonal turn being built for.
+        const horizon = Math.max(0, diffDays(addMonths(firstOfMonth(today()), 6), today()));
+        wearablePlan = projectWearableSku(inputs, { year, monthlyUnits }, today(), sku, horizon);
+      }
+    }
+
+    return { result, settings: row ?? null, history, poLines, planLines, warehouse, plan, wearablePlan };
   });
 
   app.patch('/api/skus/:sku', (req, reply) => {

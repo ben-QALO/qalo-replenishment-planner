@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { api, fmtInt, fmtNum, type SkuResult } from '../api.ts';
 import { StatusBadge, Flags, toast } from '../components/ui.tsx';
 import { PlanChart, HistoryChart, type PlanData, type HistoryRow } from '../components/charts.tsx';
+import { WearablePlanChart, WearableTransferSchedule } from '../components/WearablePlanChart.tsx';
 
 const CLASSES = ['unclassified', 'replenishable', 'watch', 'discontinued', 'ignore'];
 const PARAM_LABELS: Record<string, string> = {
@@ -25,6 +26,7 @@ interface Detail {
   planLines: any[];
   warehouse: { qty_on_hand: number; updated_at: string; updated_via: string } | null;
   plan: PlanData | null;
+  wearablePlan: import('../api.ts').WearablePlan | null;
 }
 
 export function SkuDetail({ sku, today, templates, refresh }: {
@@ -153,16 +155,42 @@ export function SkuDetail({ sku, today, templates, refresh }: {
             </div>
           </div>
 
-          <div className="card" style={{ marginTop: 16 }}>
-            <div className="card-head"><h3>The plan — stock over the next 6 months if you follow the recommendations</h3></div>
-            <div className="chart-wrap">
-              {detail.plan ? (
-                <PlanChart r={r} today={today} plan={detail.plan} />
-              ) : (
-                <div className="empty">No plan to project — this product needs a sales rate and a “replenish” classification first.</div>
+          {r.category === 'wearable' ? (
+            <>
+              <div className="card" style={{ marginTop: 16 }}>
+                <div className="card-head"><h3>Smart-ring plan — will Amazon stay in stock over the next 6 months?</h3></div>
+                <div className="chart-wrap">
+                  {detail.wearablePlan ? (
+                    <WearablePlanChart plan={detail.wearablePlan} today={today} />
+                  ) : (
+                    <div className="empty">
+                      No projection yet — enter the yearly smart-ring forecast (Action Center → WEARABLE → Ordering plan)
+                      and make sure this SKU has a wearable role set below.
+                    </div>
+                  )}
+                </div>
+              </div>
+              {detail.wearablePlan && (
+                <div className="card" style={{ marginTop: 16 }}>
+                  <div className="card-head"><h3>What to transfer, every {detail.wearablePlan.review_period_days} days</h3></div>
+                  <div style={{ padding: '4px 16px 14px' }}>
+                    <WearableTransferSchedule plan={detail.wearablePlan} today={today} />
+                  </div>
+                </div>
               )}
+            </>
+          ) : (
+            <div className="card" style={{ marginTop: 16 }}>
+              <div className="card-head"><h3>The plan — stock over the next 6 months if you follow the recommendations</h3></div>
+              <div className="chart-wrap">
+                {detail.plan ? (
+                  <PlanChart r={r} today={today} plan={detail.plan} />
+                ) : (
+                  <div className="empty">No plan to project — this product needs a sales rate and a “replenish” classification first.</div>
+                )}
+              </div>
             </div>
-          </div>
+          )}
         </>
       )}
 

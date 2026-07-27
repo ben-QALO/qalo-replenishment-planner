@@ -228,11 +228,46 @@ export interface WearableMonth {
   month: string;               // 'YYYY-MM'
   forecast_demand: number;     // this SKU's split of the aggregate forecast that month
   fba_target_units: number;    // the shelf goal at FBA that month
-  expected_transfer: number;   // warehouse→FBA that month, whole cases
+  expected_transfer: number;   // units Amazon PULLS from the warehouse that month (= its demand on the warehouse)
+  cumulative_transfer: number; // running total of expected_transfer from the start of the window
   recommended_order: number;   // China order to PLACE that month (whole cases)
   order_lands_month: string;   // 'YYYY-MM' the placed order lands (month + lead months)
+  must_be_at_warehouse_by: string;  // date the month's pull must already be at the warehouse
   ideal_wh_for_amazon: number; // ideal units to hold at the warehouse for Amazon that month
   flags?: string[];            // e.g. FORECAST_EXTRAPOLATED
+}
+
+/** One warehouse→FBA transfer on the review cadence (every `review_period_fba_days`). */
+export interface WearableTransferEvent {
+  day: number;          // days from today the transfer ships (i.e. is pulled from the warehouse)
+  date: string;         // YYYY-MM-DD
+  qty: number;
+  arrives_day: number;  // lands sellable at Amazon after the ship + check-in leg
+  arrives_date: string;
+}
+
+/** One day of the WEARABLE forward projection. */
+export interface WearablePlanPoint {
+  day: number;
+  fba: number;         // sellable at Amazon
+  in_transit: number;  // on the warehouse→FBA leg
+  goal: number;        // the seasonal FBA goal that day (forecast rate × goal days)
+}
+
+/**
+ * Day-by-day "if you follow this plan" projection for one WEARABLE SKU. Demand comes from the
+ * forecast (seasonal), transfers are decided on the real review cadence by the SAME function the
+ * Action Center uses, and the warehouse is treated as unlimited (the team always ships what Amazon
+ * needs). So this chart and the Ship-to-FBA queue cannot disagree.
+ */
+export interface WearablePlan {
+  series: WearablePlanPoint[];
+  transfers: WearableTransferEvent[];
+  stockout_day: number;        // first day FBA hits zero, or -1 if it never does
+  horizon_days: number;
+  review_period_days: number; // transfer cadence (e.g. 14 = every 2 weeks)
+  ship_leg_days: number;      // warehouse→FBA transit + check-in
+  lead_days: number;          // China → warehouse
 }
 
 /** The informative WEARABLE plan for one SKU. */

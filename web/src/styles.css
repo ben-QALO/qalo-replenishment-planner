@@ -616,3 +616,13 @@ tr.ship-group td { padding: 0; background: var(--surface-2); border-bottom: 1px 
 .wear-forecast-foot { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
 .wear-forecast-foot .spacer { flex: 1; }
 @media (max-width: 720px) { .wear-forecast-grid { grid-template-columns: repeat(3, 1fr); } .wear-intro { flex-direction: column; } }
+
+/* ── Smart-ring forward projection chart ───────────────────────────────────── */
+.wpc { padding: 4px 2px 2px; }
+.wpc-svg { width: 100%; height: auto; display: block; cursor: crosshair; }
+.wpc-ax { font-family: var(--mono); font-size: 10px; fill: var(--muted); }
+.wpc-legend { display: flex; flex-wrap: wrap; gap: 16px; margin: 10px 2px 0; font-size: 11.5px; color: var(--muted); }
+.wpc-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.wpc-legend i { width: 11px; height: 11px; border-radius: 3px; display: inline-block; }
+.wpc-legend i.dash { width: 16px; height: 0; border-top: 2px dashed var(--ink-2); border-radius: 0; }
+.wpc-read { margin: 10px 2px 0; font-size: 12px; color: var(--ink-2); min-height: 18px; line-height: 1.5; }
