@@ -107,6 +107,7 @@ export function assembleEngineInput(db: Database.Database, overrideTemplateId?: 
     inbound_working: r.inbound_working,
     inbound_shipped: r.inbound_shipped,
     inbound_received: r.inbound_received,
+    fc_transfer: r.fc_transfer ?? 0,
     reserved: r.reserved,
     unfulfillable: r.unfulfillable,
     units_shipped_t7: r.units_shipped_t7,
@@ -223,7 +224,7 @@ export function assembleEngineInput(db: Database.Database, overrideTemplateId?: 
     (groupByAsin.get(asin) ?? groupByAsin.set(asin, []).get(asin)!).push(r.sku);
   }
   const poolKey = (l: SnapshotLine) =>
-    `${l.available}|${l.reserved}|${l.inbound_working}|${l.inbound_shipped}|${l.inbound_received}`;
+    `${l.available}|${l.reserved}|${l.inbound_working}|${l.inbound_shipped}|${l.inbound_received}|${l.fc_transfer}`;
   const consolidated: Record<string, string> = {};
   for (const [, groupSkus] of groupByAsin) {
     if (groupSkus.length < 2) continue;
@@ -249,6 +250,7 @@ export function assembleEngineInput(db: Database.Database, overrideTemplateId?: 
           pLine.inbound_working += sLine.inbound_working;
           pLine.inbound_shipped += sLine.inbound_shipped;
           pLine.inbound_received += sLine.inbound_received;
+          pLine.fc_transfer = (pLine.fc_transfer ?? 0) + (sLine.fc_transfer ?? 0);
           pLine.unfulfillable = (pLine.unfulfillable ?? 0) + (sLine.unfulfillable ?? 0);
         }
         for (const w of ['units_shipped_t7', 'units_shipped_t30', 'units_shipped_t60', 'units_shipped_t90'] as const) {

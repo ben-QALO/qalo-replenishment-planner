@@ -79,3 +79,21 @@ test('earliest arrival: nothing anywhere → new PO lead, with air alternative',
   assert.equal(a.earliest_fba_arrival, '2026-09-27'); // +70+10 = 80 days
   assert.equal(a.air_earliest, '2026-08-29');         // +41+10 = 51 days
 });
+
+test('positions: units moving between Amazon FCs count toward the FBA position', () => {
+  // Amazon's export carries `fc-transfer`: stock Amazon ALREADY holds, moving between its own
+  // warehouses. It was unmapped, so the tool saw a real catalogue as a third emptier than it was
+  // (10,253 hidden units over 364 SKUs) and over-ordered. It belongs in fba_coming.
+  const base = line({ sku: 'X', available: 10, reserved: 2 });
+  const without = computePositions({ ...base, fc_transfer: 0 }, 0, []);
+  const withFc = computePositions({ ...base, fc_transfer: 28 }, 0, []);
+
+  assert.equal(without.fba_position, 12);
+  assert.equal(withFc.fc_transfer, 28);
+  assert.equal(withFc.fba_coming, 28, 'FC-transfer units are coming to sellable');
+  assert.equal(withFc.fba_position, 40, '10 available + 2 reserved + 28 moving between FCs');
+  // Must not be double counted against Amazon's own inbound-from-us columns.
+  const both = computePositions({ ...base, fc_transfer: 28, inbound_shipped: 5 }, 0, []);
+  assert.equal(both.fba_coming, 33);
+  assert.equal(both.fba_inbound, 5, 'inbound stays only what we shipped');
+});

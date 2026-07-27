@@ -30,6 +30,8 @@ export interface SnapshotLine {
   inbound_working: number;
   inbound_shipped: number;
   inbound_received: number;
+  /** Units Amazon already holds, in transit between its own fulfilment centres. */
+  fc_transfer?: number;
   reserved: number;
   unfulfillable: number;
   units_shipped_t7: number | null;
@@ -171,6 +173,7 @@ export interface SkuResult {
   fba_available: number;
   fba_reserved: number;
   fba_inbound: number;
+  fc_transfer: number;
   in_transit_to_fba: number;
   fba_coming: number;
   fba_position: number;

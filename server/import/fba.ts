@@ -11,6 +11,7 @@ export interface NormalizedLine {
   inbound_working: number;
   inbound_shipped: number;
   inbound_received: number;
+  fc_transfer: number;
   reserved: number;
   unfulfillable: number;
   units_shipped_t7: number | null;
@@ -103,6 +104,7 @@ export function normalizeFbaRecords(records: Record<string, string>[], mapping: 
       inbound_working: qty(rec, f.inbound_working, flags),
       inbound_shipped: qty(rec, f.inbound_shipped, flags),
       inbound_received: qty(rec, f.inbound_received, flags),
+      fc_transfer: qty(rec, f.fc_transfer, flags),
       reserved: qty(rec, f.reserved, flags),
       unfulfillable: qty(rec, f.unfulfillable, flags),
       units_shipped_t7: nullableInt(rec, f.units_shipped_t7),
@@ -130,6 +132,7 @@ export function normalizeFbaRecords(records: Record<string, string>[], mapping: 
       existing.inbound_working += line.inbound_working;
       existing.inbound_shipped += line.inbound_shipped;
       existing.inbound_received += line.inbound_received;
+      existing.fc_transfer += line.fc_transfer;
       existing.reserved += line.reserved;
       existing.unfulfillable += line.unfulfillable;
       for (const k of ['units_shipped_t7', 'units_shipped_t30', 'units_shipped_t60', 'units_shipped_t90'] as const) {
