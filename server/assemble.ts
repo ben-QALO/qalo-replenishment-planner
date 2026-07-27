@@ -132,11 +132,19 @@ export function assembleEngineInput(db: Database.Database, overrideTemplateId?: 
   const qaloOf = (amazonSku: string) => byAmazon.get(amazonSku)?.qalo_sku ?? amazonSku;
   const asinOf = (amazonSku: string, fallback: string | null) => byAmazon.get(amazonSku)?.asin ?? fallback;
 
+  // WEARABLE default lead time. Smart rings take ~90 days from China (vs 60 for silicone), so any
+  // SKU tagged WEARABLE uses the smart-ring template automatically — a per-SKU override still wins.
+  // Without this, a newly tagged smart ring silently inherits the 60-day global template and the
+  // ordering report tells the team to order 2 months ahead instead of 3. (See migration 016.)
+  const wearableTemplateId = Number(getSetting(db, 'wearable_template_id') ?? 0) || null;
+  const wearableTemplate = wearableTemplateId ? templateParamsById(db, wearableTemplateId) : null;
+
   const skuRows = db.prepare('SELECT * FROM skus').all() as any[];
   const skuSettings: Record<string, SkuSettings> = {};
   for (const r of skuRows) {
     let templateOverride: { name: string; params: TemplateParams } | null = null;
     if (r.template_override_id) templateOverride = templateParamsById(db, r.template_override_id);
+    else if (r.category === 'wearable' && wearableTemplate) templateOverride = wearableTemplate;
     skuSettings[r.sku] = {
       classification: r.classification,
       fulfillment_channel: r.fulfillment_channel === 'fbm' ? 'fbm' : 'fba',
