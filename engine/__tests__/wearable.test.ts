@@ -22,7 +22,7 @@ const IDEAL_WH_DAYS = 90 + 30 + 14;
 const flat = (n: number): number[] => Array(12).fill(n);
 
 function ring(sku: string, velocity: number | null, extra: Partial<WearableSkuInput> = {}): WearableSkuInput {
-  return { sku, role: 'smart_ring', velocity, fba_position: 0, template: WEARABLE, case_pack: null, ...extra };
+  return { sku, role: 'smart_ring', velocity, fba_available: 0, fba_coming: 0, template: WEARABLE, case_pack: 20, ...extra };
 }
 
 // ── recommendTransfer: WEARABLE uncapped path ───────────────────────────────
@@ -71,7 +71,7 @@ test('split: no sales signal falls back to an equal split with noSplitSignal', (
 
 test('attach: kit demand = learned attach rate × aggregate, clamped to [0,2]', () => {
   const kit = (v: number, extra = {}): WearableSkuInput =>
-    ({ sku: 'KIT', role: 'sizing_kit', velocity: v, fba_position: 0, template: WEARABLE, case_pack: null, ...extra });
+    ({ sku: 'KIT', role: 'sizing_kit', velocity: v, fba_available: 0, fba_coming: 0, template: WEARABLE, case_pack: 50, ...extra });
 
   // rings total velocity 5; kit 0.5 → attach 0.1 → 0.1 × 1000 = 100/mo.
   let out = buildWearablePlans([ring('R1', 3), ring('R2', 2), kit(0.5)], { year: 2026, monthlyUnits: flat(1000) }, '2026-07-09');
@@ -91,27 +91,68 @@ test('attach: kit demand = learned attach rate × aggregate, clamped to [0,2]', 
 
 // ── monthly ordering + ideal warehouse ────────────────────────────────────────
 
-test('monthly plan: ideal-WH, FBA target, lead offset and multiplier follow the documented formulas', () => {
-  // Single ring, velocity 10, flat 300/mo, from Jan so month 0 = Jan 2026 (31 days).
+test('monthly plan: month figures, lead offset and multiplier line up', () => {
   const { reports } = buildWearablePlans([ring('R', 10)], { year: 2026, monthlyUnits: flat(300) }, '2026-01-15');
   const r = reports['R'];
   const m0 = r.months[0];
-  const rate0 = 300 / 31;
 
   assert.equal(m0.month, '2026-01');
   assert.equal(m0.forecast_demand, 300);
-  assert.equal(m0.fba_target_units, Math.round(rate0 * 60));
-  assert.equal(m0.ideal_wh_for_amazon, Math.round(rate0 * IDEAL_WH_DAYS));
   assert.equal(r.ideal_wh_days, IDEAL_WH_DAYS);
   assert.equal(r.lead_months, 3);
-
-  // An order placed in month 0 lands 3 months later.
-  assert.equal(m0.order_lands_month, r.months[3].month);
+  // An order placed in month 0 lands 3 months later (one China lead).
   assert.equal(m0.order_lands_month, '2026-04');
-
+  assert.equal(m0.order_lands_month, r.months[3].month);
   // Multiplier: actual run-rate 10×30 = 300/mo, forecast run-rate 300/mo → 1.0.
   assert.equal(r.actual_run_rate_month, 300);
   assert.equal(r.multiplier, 1);
+});
+
+test('ONE SOURCE OF TRUTH: the monthly report equals the projection it is read from', () => {
+  // The report used to re-derive orders, the FBA goal and the warehouse level from its own separate
+  // formulas, so the table and the chart showed different numbers for the same month. Everything is
+  // now looked up out of the projection — this test is the guard that keeps it that way.
+  const inputs = [ring('SLIM-G', 3), ring('SLIM-S', 1), ring('OG-S', 1)];
+  const forecast = { year: 2026, monthlyUnits: SEASONAL };
+  const today = '2026-01-15';
+  const { reports } = buildWearablePlans(inputs, forecast, today);
+
+  const r = reports['SLIM-G'];
+  // Rebuild the SAME projection the report read from (share 0.6 of the aggregate).
+  const plan = simulateWearableSku({
+    demandFrac: 0.6, forecast, fbaAvailable: 0, fbaComing: 0,
+    template: WEARABLE, casePack: 20, moq: null, today, horizonDays: 500,
+  });
+
+  assert.equal(r.warehouse_prefill_needed, plan.warehouse_prefill_needed, 'opening commitment must match');
+  // Guard against a vacuous pass: a mis-wired input once made every quantity silently 0, so these
+  // equality checks compared 0 to 0 and told us nothing.
+  assert.ok(plan.transfers.length > 0 && plan.orders.length > 0, 'projection must actually produce a plan');
+  assert.ok(r.months.some(m => m.expected_transfer > 0), 'report must actually contain quantities');
+
+  for (const m of r.months.slice(0, 6)) {
+    const pull = plan.transfers.filter(t => t.date.slice(0, 7) === m.month).reduce((s, t) => s + t.qty, 0);
+    const order = plan.orders.filter(o => o.date.slice(0, 7) === m.month).reduce((s, o) => s + o.qty, 0);
+    assert.equal(m.expected_transfer, pull, `${m.month}: warehouse pull must match the transfer schedule`);
+    assert.equal(m.recommended_order, order, `${m.month}: China order must match the ordering plan`);
+  }
+
+  // Cumulative is a running total of the same pulls, not an independent figure.
+  let running = 0;
+  for (const m of r.months) { running += m.expected_transfer; assert.equal(m.cumulative_transfer, running, `${m.month}: cumulative drift`); }
+});
+
+test('ONE SOURCE OF TRUTH: the rollup is the sum of the per-SKU plans', () => {
+  const inputs = [ring('SLIM-G', 3), ring('SLIM-S', 1)];
+  const { reports, rollup } = buildWearablePlans(inputs, { year: 2026, monthlyUnits: SEASONAL }, '2026-01-15');
+  for (let m = 0; m < 12; m++) {
+    const sumPull = inputs.reduce((s, i) => s + reports[i.sku].months[m].expected_transfer, 0);
+    const sumOrder = inputs.reduce((s, i) => s + reports[i.sku].months[m].recommended_order, 0);
+    assert.equal(rollup.months[m].expected_transfer, sumPull, `month ${m}: pull rollup`);
+    assert.equal(rollup.months[m].recommended_order, sumOrder, `month ${m}: order rollup`);
+  }
+  assert.equal(rollup.total_prefill_needed,
+    inputs.reduce((s, i) => s + reports[i.sku].warehouse_prefill_needed, 0), 'prefill rollup');
 });
 
 test('monthly plan: doubling the forecast vs actual yields a ~2× multiplier', () => {
@@ -283,7 +324,11 @@ test('closed loop: the ordering plan actually supports every transfer it promise
   // otherwise a transfer the plan promises would be physically impossible.
   for (const goal of [60, 90]) {
     const p = sim({ template: { ...WEARABLE, fba_target_cover_days: goal }, fbaAvailable: 600, horizonDays: 240 });
-    assert.ok(p.series.every(s => s.warehouse >= 0), `goal=${goal}: warehouse pool must never go negative`);
+    // The series value is NOT clamped at zero, so this genuinely tests the ordering policy rather
+    // than a display floor. A negative day means the plan promised a transfer it couldn't fund.
+    const under = p.series.filter(s => s.warehouse < 0);
+    assert.equal(under.length, 0,
+      `goal=${goal}: warehouse pool went negative on ${under.length} days (first: day ${under[0]?.day}, ${under[0]?.warehouse})`);
     assert.ok(p.orders.length > 0, `goal=${goal}: expected a China ordering plan`);
   }
 });
