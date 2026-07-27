@@ -8,6 +8,8 @@ export interface CommitInput {
   snapshotDate: string; // YYYY-MM-DD
   filename: string;
   fileHash: string;
+  /** Re-read a file that was already imported (used after the importer itself changes). */
+  force?: boolean;
   lines: NormalizedLine[];
   warnings: string[];
   rowsTotal: number;
@@ -24,8 +26,12 @@ export interface CommitResult {
 }
 
 export function commitSnapshot(db: Database.Database, input: CommitInput): CommitResult {
-  // Identical file already imported for this date → no-op.
-  const dupe = db.prepare(
+  // Identical file already imported for this date → no-op, so an accidental double-drop is harmless.
+  // `force` overrides it: the guard compares the FILE, but the importer that reads the file also
+  // changes. When a fix teaches it a column it used to ignore (see fc-transfer), the same file must
+  // be re-read to pick the units up — otherwise the stored snapshot keeps the old, wrong numbers and
+  // there is no way to correct it short of editing the database.
+  const dupe = input.force ? undefined : db.prepare(
     'SELECT id, revision FROM snapshots WHERE snapshot_date = ? AND file_hash = ?',
   ).get(input.snapshotDate, input.fileHash) as { id: number; revision: number } | undefined;
   if (dupe) {

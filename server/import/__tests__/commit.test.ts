@@ -92,3 +92,23 @@ test('two dates coexist as separate snapshots (history accumulates)', () => {
   const count = (db.prepare('SELECT COUNT(*) c FROM snapshots').get() as any).c;
   assert.equal(count, 2);
 });
+
+test('force re-reads a file already imported (needed when the importer itself changes)', () => {
+  const db = freshDb();
+  const first = commitSnapshot(db, { ...base, fileHash: 'h1', lines: [mkLine('A', 5)] });
+  assert.equal(first.alreadyImported, false);
+
+  // Same file again → correctly a no-op, so an accidental double-drop is harmless.
+  const again = commitSnapshot(db, { ...base, fileHash: 'h1', lines: [mkLine('A', 5)] });
+  assert.equal(again.alreadyImported, true);
+  assert.equal(again.revision, first.revision, 'no-op must not bump the revision');
+
+  // But when a fix teaches the importer a column it used to ignore, the SAME file has to be re-read
+  // or the stored snapshot keeps the old, wrong numbers forever. `force` is that escape hatch.
+  const forced = commitSnapshot(db, { ...base, fileHash: 'h1', lines: [mkLine('A', 99)] , force: true });
+  assert.equal(forced.alreadyImported, false, 'force must not short-circuit');
+  assert.equal(forced.revision, first.revision + 1, 'a real re-import bumps the revision');
+  const row = db.prepare('SELECT available FROM snapshot_lines WHERE sku = ?').get('A') as { available: number };
+  assert.equal(row.available, 99, 'the re-read values must actually replace the old ones');
+  db.close();
+});
