@@ -626,3 +626,7 @@ tr.ship-group td { padding: 0; background: var(--surface-2); border-bottom: 1px 
 .wpc-legend i { width: 11px; height: 11px; border-radius: 3px; display: inline-block; }
 .wpc-legend i.dash { width: 16px; height: 0; border-top: 2px dashed var(--ink-2); border-radius: 0; }
 .wpc-read { margin: 10px 2px 0; font-size: 12px; color: var(--ink-2); min-height: 18px; line-height: 1.5; }
+.wpc-sub { margin: 20px 2px 6px; font-family: var(--display); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.wpc-legend i.dash.purple { border-top-color: var(--c-order); }
+.wpc-legend i.tri { width: 0; height: 0; border-radius: 0; border-left: 5px solid transparent; border-right: 5px solid transparent; border-bottom: 8px solid var(--grad-lime); }
+.wpc-prefill { background: color-mix(in srgb, var(--grad-purple) 12%, transparent); border: 1px solid color-mix(in srgb, var(--grad-purple) 34%, transparent); border-radius: var(--r-sm); padding: 10px 13px; margin: 2px 2px 14px; font-size: 12.5px; line-height: 1.55; color: var(--ink-2); }

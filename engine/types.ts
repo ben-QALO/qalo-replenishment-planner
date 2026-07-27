@@ -246,12 +246,23 @@ export interface WearableTransferEvent {
   arrives_date: string;
 }
 
+/** One China→warehouse order in the plan, on the monthly PO cadence. */
+export interface WearableOrderEvent {
+  day: number;          // days from today the order must be PLACED
+  date: string;         // YYYY-MM-DD
+  qty: number;
+  arrives_day: number;  // lands at the warehouse after the China lead
+  arrives_date: string;
+}
+
 /** One day of the WEARABLE forward projection. */
 export interface WearablePlanPoint {
   day: number;
   fba: number;         // sellable at Amazon
   in_transit: number;  // on the warehouse→FBA leg
-  goal: number;        // the seasonal FBA goal that day (forecast rate × goal days)
+  warehouse: number;   // at the warehouse, earmarked for Amazon
+  on_order: number;    // on the water from China, earmarked for Amazon
+  goal: number;        // forecast demand the shelf must cover from this day
 }
 
 /**
@@ -263,11 +274,21 @@ export interface WearablePlanPoint {
 export interface WearablePlan {
   series: WearablePlanPoint[];
   transfers: WearableTransferEvent[];
+  /** The China orders that make the transfers above physically possible. */
+  orders: WearableOrderEvent[];
   stockout_day: number;        // first day FBA hits zero, or -1 if it never does
+  /**
+   * Units that must ALREADY be at the warehouse (or already on the water) earmarked for Amazon for
+   * this plan to hold. Nothing ordered today can land for `lead_days`, so the opening stretch can
+   * only be covered by stock that already exists — this is the size of that commitment, and the one
+   * number the inventory team needs in order to say yes or no.
+   */
+  warehouse_prefill_needed: number;
   horizon_days: number;
-  review_period_days: number; // transfer cadence (e.g. 14 = every 2 weeks)
-  ship_leg_days: number;      // warehouse→FBA transit + check-in
-  lead_days: number;          // China → warehouse
+  review_period_days: number;    // transfer cadence (e.g. 14 = every 2 weeks)
+  po_review_period_days: number; // ordering cadence (e.g. 30 = monthly)
+  ship_leg_days: number;         // warehouse→FBA transit + check-in
+  lead_days: number;             // China → warehouse
 }
 
 /** The informative WEARABLE plan for one SKU. */

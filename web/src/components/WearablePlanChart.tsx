@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { fmtInt, type WearablePlan } from '../api.ts';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-const W = 900, H = 300;
+const W = 900, H = 230, H2 = 170;
 const PAD = { l: 52, r: 16, t: 18, b: 34 };
 
 const addDays = (iso: string, n: number) => {
@@ -22,6 +22,7 @@ const pretty = (iso: string) => `${MONTHS[Number(iso.slice(5, 7)) - 1]} ${Number
  */
 export function WearablePlanChart({ plan, today }: { plan: WearablePlan; today: string }) {
   const [hover, setHover] = useState<number | null>(null);
+  const prefill = plan.warehouse_prefill_needed;
 
   const { series } = plan;
   const maxY = useMemo(
@@ -56,6 +57,13 @@ export function WearablePlanChart({ plan, today }: { plan: WearablePlan; today: 
 
   return (
     <div className="wpc">
+      {prefill > 0 && (
+        <div className="wpc-prefill">
+          <b>{fmtInt(prefill)} units</b> must already be at the warehouse for Amazon (or on the water) for this plan to
+          hold — nothing ordered today lands for <b>{plan.lead_days} days</b>. That's the one figure to confirm with your
+          inventory team; the China orders below cover everything after it.
+        </div>
+      )}
       <svg viewBox={`0 0 ${W} ${H}`} className="wpc-svg" role="img"
         onMouseLeave={() => setHover(null)}
         onMouseMove={e => {
@@ -128,6 +136,63 @@ export function WearablePlanChart({ plan, today }: { plan: WearablePlan; today: 
         <span><i style={{ background: 'var(--c-ship)' }} /> A transfer lands</span>
       </div>
 
+      {/* PANEL 2 — the supply chain that makes the shelf above possible. Without this the top panel
+          is an assertion; with it, you can see the China orders arriving in time to fund each pull. */}
+      <div className="wpc-sub">The supply behind it — what has to be at the warehouse, and ordered from China</div>
+      <svg viewBox={`0 0 ${W} ${H2}`} className="wpc-svg" role="img">
+        {(() => {
+          const maxS = Math.max(1, ...series.map(s => Math.max(s.warehouse, s.on_order))) * 1.1;
+          const y2 = (v: number) => PAD.t + (1 - v / maxS) * (H2 - PAD.t - PAD.b);
+          const p2 = (get: (s: typeof series[0]) => number) =>
+            series.map((s, i) => `${i === 0 ? 'M' : 'L'}${x(s.day).toFixed(1)},${y2(get(s)).toFixed(1)}`).join(' ');
+          return (
+            <>
+              {[0, 0.5, 1].map(f => (
+                <g key={f}>
+                  <line x1={PAD.l} x2={W - PAD.r} y1={y2(maxS * f)} y2={y2(maxS * f)} stroke="var(--hairline)" />
+                  <text x={PAD.l - 8} y={y2(maxS * f) + 3.5} textAnchor="end" className="wpc-ax">{fmtInt(Math.round(maxS * f))}</text>
+                </g>
+              ))}
+              {/* On the water from China */}
+              <path d={`${p2(s => s.on_order)} L${x(lastDay).toFixed(1)},${y2(0)} L${x(0).toFixed(1)},${y2(0)} Z`}
+                fill="var(--c-order)" opacity="0.14" />
+              <path d={p2(s => s.on_order)} fill="none" stroke="var(--c-order)" strokeWidth="1.6" strokeDasharray="4 3" opacity="0.85" />
+              {/* At the warehouse, earmarked for Amazon */}
+              <path d={`${p2(s => s.warehouse)} L${x(lastDay).toFixed(1)},${y2(0)} L${x(0).toFixed(1)},${y2(0)} Z`}
+                fill="var(--grad-lime)" opacity="0.13" />
+              <path d={p2(s => s.warehouse)} fill="none" stroke="var(--grad-lime)" strokeWidth="2.2" />
+
+              {/* Each China order: where it's placed, and where it lands */}
+              {plan.orders.map((o, i) => (
+                <g key={i}>
+                  <line x1={x(o.day)} x2={x(o.day)} y1={PAD.t} y2={H2 - PAD.b}
+                    stroke="var(--c-order)" strokeWidth="1.5" opacity="0.5" />
+                  <text x={x(o.day)} y={PAD.t - 5} textAnchor="middle" className="wpc-ax" style={{ fill: 'var(--c-order)' }}>
+                    {fmtInt(o.qty)}
+                  </text>
+                  {o.arrives_day <= lastDay && (
+                    <polygon
+                      points={`${x(o.arrives_day)},${y2(0) - 1} ${x(o.arrives_day) - 4},${y2(0) + 7} ${x(o.arrives_day) + 4},${y2(0) + 7}`}
+                      fill="var(--grad-lime)" />
+                  )}
+                </g>
+              ))}
+
+              <line x1={PAD.l} x2={W - PAD.r} y1={H2 - PAD.b} y2={H2 - PAD.b} stroke="var(--hairline-2)" />
+              {ticks.map(t => (
+                <text key={t.day} x={x(t.day)} y={H2 - PAD.b + 16} textAnchor="middle" className="wpc-ax">{t.label}</text>
+              ))}
+            </>
+          );
+        })()}
+      </svg>
+      <div className="wpc-legend">
+        <span><i style={{ background: 'var(--grad-lime)' }} /> At the warehouse, for Amazon</span>
+        <span><i className="dash purple" /> On the water from China</span>
+        <span><i className="tri" /> A China order lands</span>
+        <span style={{ color: 'var(--c-order)' }}>│ vertical line = place the order (units above)</span>
+      </div>
+
       {hoverPt ? (
         <div className="wpc-read">
           <b>{pretty(addDays(today, hoverPt.day))}</b> · sellable <b>{fmtInt(hoverPt.fba)}</b>
@@ -177,6 +242,39 @@ export function WearableTransferSchedule({ plan, today }: { plan: WearablePlan; 
         Every <b>{plan.review_period_days} days</b>, sized so Amazon holds enough for the demand ahead. Over this
         window Amazon will pull <b>{fmtInt(total)}</b> units out of the warehouse — that total is what the inventory
         team needs from you, on top of whatever retail and Shopify need.
+      </div>
+    </>
+  );
+}
+
+/** The China orders that have to be placed for those transfers to be possible. */
+export function WearableOrderSchedule({ plan, today }: { plan: WearablePlan; today: string }) {
+  if (plan.orders.length === 0) {
+    return <div className="empty">No new China orders needed in this window.</div>;
+  }
+  const total = plan.orders.reduce((s, o) => s + o.qty, 0);
+  return (
+    <>
+      <table className="data">
+        <thead><tr>
+          <th className="plain">Place the order</th>
+          <th className="plain num">Units to order</th>
+          <th className="plain">Lands at warehouse</th>
+        </tr></thead>
+        <tbody>
+          {plan.orders.map((o, i) => (
+            <tr key={i}>
+              <td className="mono">{pretty(o.date)}{o.day === 0 && <span className="wear-tag">now</span>}</td>
+              <td className="num" style={{ fontWeight: 600, color: 'var(--grad-purple)' }}>{fmtInt(o.qty)}</td>
+              <td className="mono" style={{ color: 'var(--muted)', fontSize: 11.5 }}>{pretty(o.arrives_date)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div className="wear-note">
+        Monthly, each sized to fund the transfers it will have to serve when it lands {plan.lead_days} days later —
+        plus a safety cushion. <b>{fmtInt(total)}</b> units total across this window. These are Amazon's needs only;
+        your team adds retail and Shopify on top.
       </div>
     </>
   );
