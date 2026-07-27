@@ -216,9 +216,18 @@ export function assembleEngineInput(db: Database.Database, overrideTemplateId?: 
   // and the double-counted shared FBA pool that mis-ordered these products.
   const directlyMapped = new Set(mapRows.filter(m => m.amazon_sku).map(m => m.amazon_sku as string));
   const lineBySku = new Map(lines.map(l => [l.sku, l]));
+  const classOf = new Map<string, string>(skuRows.map(r => [r.sku, r.classification as string]));
+  const isPlanned = (sku: string) => classOf.get(sku) === 'replenishable' || classOf.get(sku) === 'watch';
+
+  // Group by ASIN across EVERY SKU in the catalogue, not just the planned ones. A relabelled
+  // duplicate listing (e.g. MFL12_FNSKU alongside MFL12 on B07PLPZ757) usually has no sales of its
+  // own, so it tends to be left unclassified — but it still physically holds stock of the same
+  // product. Gating the grouping on classification made that stock invisible: a real ASIN had 1,000
+  // units sitting under the duplicate while the tool warned the primary was about to go out of
+  // stock. Classification decides whether a SKU gets its OWN plan; it must not decide whether its
+  // inventory exists.
   const groupByAsin = new Map<string, string[]>();
   for (const r of skuRows) {
-    if (r.classification !== 'replenishable' && r.classification !== 'watch') continue;
     const asin = asinOf(r.sku, r.asin ?? null);
     if (!asin) continue;
     (groupByAsin.get(asin) ?? groupByAsin.set(asin, []).get(asin)!).push(r.sku);
@@ -228,7 +237,14 @@ export function assembleEngineInput(db: Database.Database, overrideTemplateId?: 
   const consolidated: Record<string, string> = {};
   for (const [, groupSkus] of groupByAsin) {
     if (groupSkus.length < 2) continue;
-    const primary = groupSkus.find(s => directlyMapped.has(s)) ?? groupSkus[0];
+    // Only worth merging if something in the group is actually being planned.
+    if (!groupSkus.some(isPlanned)) continue;
+    // The primary must be the listing the team actually sells and plans — never the relabelled
+    // duplicate, which typically has no sales history and would move the plan onto a dead SKU.
+    const primary = groupSkus.find(s => isPlanned(s) && directlyMapped.has(s))
+      ?? groupSkus.find(isPlanned)
+      ?? groupSkus.find(s => directlyMapped.has(s))
+      ?? groupSkus[0];
     const pLine = lineBySku.get(primary);
     if (!pLine) continue;   // mapped primary absent from this snapshot → leave the group as-is (safe)
     const seenPools = new Set<string>([poolKey(pLine)]);
