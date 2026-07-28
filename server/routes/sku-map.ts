@@ -31,8 +31,15 @@ export function skuMapRoutes(app: FastifyInstance): void {
     // Which Amazon SKUs does the tool actually see in the FBA catalog? (for a "matched" count)
     const catalogSkus = new Set((db.prepare('SELECT sku FROM skus').all() as { sku: string }[]).map(r => r.sku));
 
+    // Mappings typed by hand on a SKU's Settings page (source_file 'manual') survive a re-import:
+    // the file replaces everything it covers, and anything it doesn't mention is put back.
+    const manual = db.prepare("SELECT qalo_sku, amazon_sku, asin FROM sku_map WHERE source_file = 'manual'")
+      .all() as { qalo_sku: string; amazon_sku: string | null; asin: string | null }[];
+    const fromFileQalo = new Set(parsed.rows.map(r => r.qalo_sku));
+    const fromFileAmazon = new Set(parsed.rows.map(r => r.amazon_sku).filter(Boolean) as string[]);
+
     const now = nowIso();
-    let matched = 0, withAsin = 0, differ = 0;
+    let matched = 0, withAsin = 0, differ = 0, keptManual = 0;
     const run = db.transaction(() => {
       db.prepare('DELETE FROM sku_map').run();
       const ins = db.prepare(`INSERT INTO sku_map (qalo_sku, amazon_sku, asin, source_file, updated_at)
@@ -43,6 +50,12 @@ export function skuMapRoutes(app: FastifyInstance): void {
         if (r.amazon_sku && catalogSkus.has(r.amazon_sku)) matched++;
         if (r.asin) withAsin++;
         if (r.amazon_sku && r.amazon_sku !== r.qalo_sku) differ++;
+      }
+      for (const m of manual) {
+        if (fromFileQalo.has(m.qalo_sku)) continue;                       // the file has a newer answer
+        if (m.amazon_sku && fromFileAmazon.has(m.amazon_sku)) continue;   // that listing is now mapped by the file
+        ins.run(m.qalo_sku, m.amazon_sku, m.asin, 'manual', now);
+        keptManual++;
       }
     });
     run();
@@ -55,6 +68,7 @@ export function skuMapRoutes(app: FastifyInstance): void {
       matched_to_catalog: matched,
       with_asin: withAsin,
       amazon_differs_from_qalo: differ,
+      kept_manual: keptManual,
     };
   });
 

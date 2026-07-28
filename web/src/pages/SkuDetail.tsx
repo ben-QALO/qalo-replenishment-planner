@@ -48,6 +48,7 @@ export function SkuDetail({ sku, today, templates, refresh }: {
       category: s.category ?? 'core',
       wearable_role: s.wearable_role ?? '',
       asin: s.asin ?? '',
+      qalo_sku: s.qalo_sku ?? '',
       case_pack: s.case_pack ?? '',
       moq: s.moq ?? '',
       order_multiple: s.order_multiple ?? '',
@@ -70,6 +71,7 @@ export function SkuDetail({ sku, today, templates, refresh }: {
       category: form.category || 'core',
       wearable_role: form.category === 'wearable' ? (form.wearable_role || null) : null,
       asin: form.asin.trim() || null,
+      qalo_sku: form.qalo_sku.trim() || null,
       case_pack: form.case_pack === '' ? null : Number(form.case_pack),
       moq: form.moq === '' ? null : Number(form.moq),
       order_multiple: form.order_multiple === '' ? null : Number(form.order_multiple),
@@ -222,6 +224,12 @@ export function SkuDetail({ sku, today, templates, refresh }: {
             </select></label>
           <label style={{ fontSize: 12 }}>ASIN<br />
             <input className="field" style={{ width: '100%' }} value={form.asin} onChange={set('asin')} placeholder="B0..." /></label>
+          <label style={{ fontSize: 12, gridColumn: '1 / -1' }}>
+            QALO SKU <span style={{ color: 'var(--muted)', fontWeight: 400 }}>
+              — the internal code NetSuite uses for this product. Amazon SKU here is <span className="mono">{sku}</span>;
+              leave blank if they're the same.</span><br />
+            <input className="field mono" style={{ width: '100%' }} value={form.qalo_sku} onChange={set('qalo_sku')}
+              placeholder={sku} /></label>
           <label style={{ fontSize: 12 }}>Fulfillment channel<br />
             <select className="field" style={{ width: '100%' }} value={form.fulfillment_channel} onChange={set('fulfillment_channel')}>
               <option value="fba">FBA — ship warehouse stock to Amazon</option>
