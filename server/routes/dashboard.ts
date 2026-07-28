@@ -35,6 +35,13 @@ function buildWorklist(db: Database.Database, output: ReturnType<typeof currentR
       AND NOT EXISTS (SELECT 1 FROM sku_map m WHERE m.amazon_sku = s.sku)
       AND NOT EXISTS (SELECT 1 FROM sku_map m WHERE m.asin = s.asin AND s.asin IS NOT NULL AND s.asin <> '')`).get() as any).c;
 
+  // Products the tool is planning but that have no case pack / MOQ. A new SKU arrives with these
+  // blank, and blank is NOT harmless: recommendTransfer falls back to a case pack of 1, so the tool
+  // asks for loose units (e.g. 37) on a product that physically ships in cases of 50, and no MOQ
+  // floor is applied to its China orders. Previously there was no way to even find them.
+  const missingPackaging = (db.prepare(`SELECT COUNT(*) c FROM skus
+    WHERE classification IN ('replenishable','watch') AND (case_pack IS NULL OR moq IS NULL)`).get() as any).c;
+
   return {
     transfers_to_review: toReview,
     transfers_to_export: toExport,
@@ -42,7 +49,8 @@ function buildWorklist(db: Database.Database, output: ReturnType<typeof currentR
     new_products: unclassified,
     no_velocity: noVelocity,
     unmapped_skus: unmapped,
-    total: toReview + toExport + posToAction.length + unclassified + noVelocity + unmapped,
+    missing_packaging: missingPackaging,
+    total: toReview + toExport + posToAction.length + unclassified + noVelocity + unmapped + missingPackaging,
   };
 }
 

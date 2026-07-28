@@ -8,14 +8,19 @@ const CLASSES = ['unclassified', 'replenishable', 'watch', 'discontinued', 'igno
 
 type SortKey = keyof SkuResult | 'none';
 
-export function AllSkus({ data, refresh, openSku, initialStatus, initialFlag }: {
+export function AllSkus({ data, refresh, openSku, initialStatus, initialFlag, initialSetup, initialClass }: {
   data: SkusResponse; refresh: () => void; openSku: (sku: string) => void;
-  initialStatus?: string | null; initialFlag?: string | null;
+  initialStatus?: string | null; initialFlag?: string | null; initialSetup?: string | null; initialClass?: string | null;
 }) {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string | null>(initialStatus ?? null);
   const [flagFilter, setFlagFilter] = useState<string | null>(initialFlag ?? null);
-  const [classFilter, setClassFilter] = useState<string | null>(null);
+  const [classFilter, setClassFilter] = useState<string | null>(initialClass ?? null);
+  // Filter on the ordering SETTINGS, not just the computed status. A new SKU arrives with a blank
+  // case pack / MOQ, which quietly makes the tool ask for loose units instead of whole cases — and
+  // there was previously no way to find those products at all.
+  const [setupFilter, setSetupFilter] = useState<string | null>(initialSetup ?? null);
+  const [packFilter, setPackFilter] = useState<string>('');
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: 'none', dir: 1 });
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkField, setBulkField] = useState('classification');
@@ -27,6 +32,14 @@ export function AllSkus({ data, refresh, openSku, initialStatus, initialFlag }: 
     if (statusFilter) out = out.filter(r => r.status === statusFilter);
     if (flagFilter) out = out.filter(r => r.flags.includes(flagFilter));
     if (classFilter) out = out.filter(r => r.classification === classFilter);
+    const st = (sku: string) => data.settings?.[sku];
+    if (setupFilter === 'packaging') out = out.filter(r => st(r.sku)?.case_pack == null || st(r.sku)?.moq == null);
+    if (setupFilter === 'no_case_pack') out = out.filter(r => st(r.sku)?.case_pack == null);
+    if (setupFilter === 'no_moq') out = out.filter(r => st(r.sku)?.moq == null);
+    if (packFilter.trim()) {
+      const n = Number(packFilter);
+      if (Number.isFinite(n)) out = out.filter(r => st(r.sku)?.case_pack === n || st(r.sku)?.moq === n);
+    }
     if (search.trim()) {
       const q = search.trim().toLowerCase();
       out = out.filter(r => r.sku.toLowerCase().includes(q) || r.title.toLowerCase().includes(q));
@@ -41,7 +54,7 @@ export function AllSkus({ data, refresh, openSku, initialStatus, initialFlag }: 
       });
     }
     return out;
-  }, [data.results, statusFilter, flagFilter, classFilter, search, sort]);
+  }, [data.results, data.settings, statusFilter, flagFilter, classFilter, setupFilter, packFilter, search, sort]);
 
   const parentRef = useRef<HTMLDivElement>(null);
   const virtualizer = useVirtualizer({
@@ -94,6 +107,16 @@ export function AllSkus({ data, refresh, openSku, initialStatus, initialFlag }: 
           <option value="">All classifications</option>
           {CLASSES.map(c => <option key={c} value={c}>{c}</option>)}
         </select>
+        <select className="field" value={setupFilter ?? ''} onChange={e => setSetupFilter(e.target.value || null)}
+          title="Find products whose ordering settings were never filled in">
+          <option value="">Any setup</option>
+          <option value="packaging">Missing case pack or MOQ</option>
+          <option value="no_case_pack">Missing case pack</option>
+          <option value="no_moq">Missing MOQ</option>
+        </select>
+        <input className="field num" style={{ width: 130 }} type="number" placeholder="case pack / MOQ"
+          title="Show products whose case pack OR MOQ equals this number"
+          value={packFilter} onChange={e => setPackFilter(e.target.value)} />
         {flagFilter && (
           <button className="chip on" onClick={() => setFlagFilter(null)}>
             flag: {flagFilter.toLowerCase().replace(/_/g, ' ')} ✕

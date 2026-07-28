@@ -151,7 +151,7 @@ export function App() {
         ) : (
           <>
             {route.page === 'dashboard' && skus && <Dashboard data={skus} worklist={meta?.worklist ?? null} refresh={refresh} openSku={openSku} go={go} />}
-            {route.page === 'skus' && skus && <AllSkus data={skus} refresh={refresh} openSku={openSku} initialStatus={route.params.get('status')} initialFlag={route.params.get('flag')} />}
+            {route.page === 'skus' && skus && <AllSkus data={skus} refresh={refresh} openSku={openSku} initialStatus={route.params.get('status')} initialFlag={route.params.get('flag')} initialSetup={route.params.get('setup')} initialClass={route.params.get('class')} />}
             {route.page === 'imports' && <Imports refresh={refresh} />}
             {route.page === 'warehouse' && skus && <WarehousePos data={skus} refresh={refresh} initialTab={route.params.get('tab')} />}
             {route.page === 'templates' && <Templates refresh={refresh} />}
