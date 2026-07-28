@@ -316,6 +316,44 @@ test('projection: reports Amazon’s demand on the warehouse, ignoring the share
   assert.ok(totalPull < yearDemand * 1.8, `pull ${totalPull} implausibly high vs demand ${yearDemand}`);
 });
 
+test('multi-year forecast: each month reads its OWN year, not just the newest one', () => {
+  // Real data had BOTH a 2026 and a 2027 forecast on file. Picking the newest year planned 2026
+  // off the 2027 numbers and flagged every single month as an estimate, silently ignoring the
+  // forecast that actually applied.
+  const y2026 = Array(12).fill(100);
+  const y2027 = Array(12).fill(900);
+  const { reports } = buildWearablePlans(
+    [ring('R', 10)],
+    { year: 2026, monthlyUnits: y2026, byYear: { 2026: y2026, 2027: y2027 } },
+    '2026-11-15',
+  );
+  const m = reports['R'].months;
+  // Nov + Dec 2026 come from the 2026 forecast...
+  assert.equal(m[0].month, '2026-11');
+  assert.equal(m[0].forecast_demand, 100, 'Nov 2026 must use the 2026 forecast');
+  assert.equal(m[1].forecast_demand, 100);
+  // ...and Jan 2027 onward from the 2027 one, with neither marked as an estimate.
+  assert.equal(m[2].month, '2027-01');
+  assert.equal(m[2].forecast_demand, 900, 'Jan 2027 must use the 2027 forecast');
+  for (const mm of m.slice(0, 12)) {
+    assert.ok(!(mm.flags ?? []).includes('FORECAST_EXTRAPOLATED'), `${mm.month} wrongly flagged as an estimate`);
+  }
+});
+
+test('multi-year forecast: a year with nothing entered still reuses last year and says so', () => {
+  const y2026 = Array(12).fill(100);
+  const { reports } = buildWearablePlans(
+    [ring('R', 10)],
+    { year: 2026, monthlyUnits: y2026, byYear: { 2026: y2026 } },   // no 2027 on file
+    '2026-11-15',
+  );
+  const m = reports['R'].months;
+  assert.ok(!(m[0].flags ?? []).includes('FORECAST_EXTRAPOLATED'), 'Nov 2026 is real');
+  assert.equal(m[2].month, '2027-01');
+  assert.ok((m[2].flags ?? []).includes('FORECAST_EXTRAPOLATED'), 'Jan 2027 has no forecast — must be flagged');
+  assert.equal(m[2].forecast_demand, 100, 'and falls back to the same month last year');
+});
+
 // ── the closed loop: China orders ↔ warehouse ↔ transfers ↔ FBA ───────────────
 
 test('closed loop: the ordering plan actually supports every transfer it promises', () => {

@@ -134,8 +134,14 @@ export interface EngineInput {
    * `smartRingSkus` by trailing velocity share and derives the sizing kit as an attach product.
    */
   wearableForecast?: {
-    year: number;
-    monthlyUnits: number[];      // length 12, Jan..Dec
+    year: number;                // the anchor year `monthlyUnits` belongs to
+    monthlyUnits: number[];      // length 12, Jan..Dec — the fallback when a year has no forecast
+    /**
+     * Every forecast year on file, keyed by calendar year. A rolling 12-month window straddles two
+     * years, so each month must read ITS OWN year's numbers; falling back to a single year (and
+     * picking the latest one at that) planned 2026 with the 2027 forecast and ignored 2026 entirely.
+     */
+    byYear?: Record<number, number[]>;
     smartRingSkus: string[];     // the variant SKUs the aggregate splits across
     sizingKitSku?: string | null;
   } | null;

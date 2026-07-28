@@ -97,16 +97,25 @@ export function wearableDemandFractions(inputs: WearableRateInput[]): Record<str
 /** Forecast demand for this SKU on a given day-offset from `today`, in units/day. */
 export function wearableDemandCurve(
   demandFrac: number,
-  forecast: { year: number; monthlyUnits: number[] },
+  forecast: WearableForecast,
   today: string,
 ): (dayOffset: number) => number {
   return (dayOffset: number) => {
     const d = addDays(today, dayOffset);
     const y = Number(d.slice(0, 4));
     const mo = Number(d.slice(5, 7));
-    const units = (forecast.monthlyUnits[mo - 1] ?? 0) * demandFrac;
+    // Prefer that calendar year's own forecast; only reuse the anchor year when it has none.
+    const months = forecast.byYear?.[y] ?? forecast.monthlyUnits;
+    const units = (months[mo - 1] ?? 0) * demandFrac;
     return units / daysInMonth(y, mo);
   };
+}
+
+/** The forecast as the engine consumes it: several years when available, one anchor year as fallback. */
+export interface WearableForecast {
+  year: number;
+  monthlyUnits: number[];
+  byYear?: Record<number, number[]>;
 }
 
 const sumDemand = (demand: (d: number) => number, from: number, days: number): number => {
@@ -177,7 +186,7 @@ export function wearableTransferQty(opts: {
  */
 export function simulateWearableSku(opts: {
   demandFrac: number;                  // share of the aggregate forecast this SKU carries
-  forecast: { year: number; monthlyUnits: number[] };
+  forecast: WearableForecast;
   fbaAvailable: number;                // real, from Amazon
   fbaComing: number;                   // real inbound, from Amazon
   template: TemplateParams;
@@ -322,7 +331,7 @@ export function simulateWearableSku(opts: {
  */
 export function buildWearablePlans(
   inputs: WearableSkuInput[],
-  forecast: { year: number; monthlyUnits: number[] },
+  forecast: WearableForecast,
   today: string,
 ): WearablePlanResult {
   const smartRings = inputs.filter(i => i.role === 'smart_ring');
@@ -338,8 +347,13 @@ export function buildWearablePlans(
     const mDate = addMonths(monthStart, idx);
     const y = Number(mDate.slice(0, 4));
     const calMonth = Number(mDate.slice(5, 7));   // 1..12
-    const units = forecast.monthlyUnits[calMonth - 1] ?? 0;
-    return { mDate, y, calMonth, units, extrapolated: y !== forecast.year };
+    const own = forecast.byYear?.[y];
+    const units = (own ?? forecast.monthlyUnits)[calMonth - 1] ?? 0;
+    // "Estimated" means this month's own year has no forecast entered, so last year's same month is
+    // being reused. With a multi-year forecast that's a lookup; with only the anchor year supplied,
+    // it's any month outside it.
+    const extrapolated = forecast.byYear ? !own : y !== forecast.year;
+    return { mDate, y, calMonth, units, extrapolated };
   };
 
   const reports: Record<string, WearableReport> = {};
@@ -446,7 +460,7 @@ export function buildWearablePlans(
  */
 export function projectWearableSku(
   inputs: WearableSkuInput[],
-  forecast: { year: number; monthlyUnits: number[] },
+  forecast: WearableForecast,
   today: string,
   sku: string,
   horizonDays: number,

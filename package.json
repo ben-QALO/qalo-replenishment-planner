@@ -9,6 +9,7 @@
   },
   "scripts": {
     "start": "node server/index.ts",
+    "qa:prod": "bash scripts/qa-prod.sh",
     "test": "node --test 'engine/__tests__/*.test.ts' 'server/**/__tests__/*.test.ts'",
     "build:web": "vite build --config web/vite.config.ts",
     "dev:web": "vite --config web/vite.config.ts"
