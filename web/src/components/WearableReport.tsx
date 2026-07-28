@@ -131,7 +131,7 @@ export function WearableReport({ results, rollup, refresh, openSku }: {
         <table className="data wear-months">
           <thead><tr>
             <th className="plain">Month</th>
-            <th className="plain num">Forecast demand</th>
+            <th className="plain num" title="What the plan is sizing for: your forecast, or your actual sales rate where that is higher">Planned demand</th>
             <th className="plain num">Amazon pulls from WH</th>
             <th className="plain num">Cumulative</th>
             <th className="plain num">Order from China</th>
@@ -143,6 +143,8 @@ export function WearableReport({ results, rollup, refresh, openSku }: {
                 <td className="mono">{prettyMonth(m.month)}
                   {(m.flags ?? []).includes('FORECAST_EXTRAPOLATED') &&
                     <span className="wear-tag" title="No forecast entered for this month — reuses last year's same month">est.</span>}
+                  {(m.flags ?? []).includes('PLANNED_AT_ACTUAL') &&
+                    <span className="wear-tag" title="Your forecast for this month is below what this product is actually selling, so the plan uses the real sales rate instead — it never plans for less than you're selling">at actual</span>}
                 </td>
                 <td className="num">{fmtInt(m.forecast_demand)}</td>
                 <td className="num" style={{ fontWeight: 600 }}>{fmtInt(m.expected_transfer)}</td>
@@ -155,7 +157,9 @@ export function WearableReport({ results, rollup, refresh, openSku }: {
         </table>
       </div>
       <div className="wear-note">
-        <b>Amazon pulls from WH</b> is the number to give your inventory team — the units Amazon will take out of the
+        <b>Planned demand</b> is your forecast, lifted to your real sales rate for any month where the
+        forecast has fallen behind (tagged <b>at actual</b>) — the plan never sizes for less than you're
+        selling. <b>Amazon pulls from WH</b> is the number to give your inventory team — the units Amazon will take out of the
         warehouse that month, which they add to what retail and Shopify need. You never have to know the shared totals.
         <br /><b>Order from China</b> is what to place that month so it lands ~{lead} months later, sized to cover the
         pull in the month it arrives.
