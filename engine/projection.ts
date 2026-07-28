@@ -208,11 +208,22 @@ export function projectDoNothing(
   openPoArrivals: { day: number; qty: number }[],
   t: TemplateParams,
   horizonDays: number,
+  /**
+   * Of `fbaComing`, the units Amazon ALREADY holds and is shuttling between its own fulfilment
+   * centres. These must not be timed like a shipment we sent: an FC transfer completes in days,
+   * whereas `fbaComing` otherwise lands at the midpoint of a ~5-week check-in leg. Timing them the
+   * slow way made a SKU with 10 sellable + 28 in FC transfer read as CRITICAL — it "ran dry" on day
+   * 16 while its own units were modelled as arriving on day 17.
+   */
+  fcTransfer = 0,
 ): Projection {
   const fbaTargetUnits = velocity * t.fba_target_cover_days;
   // Approximate the arrival of already-in-flight units: no per-unit ETA exists, so land
   // them at the midpoint of the transfer leg — a central estimate, not a cliff.
   const comingDay = Math.max(1, Math.round(t.fba_ship_checkin_days / 2));
+  const fcDays = 3;                                   // Amazon-internal moves settle in a few days
+  const fcUnits = Math.max(0, Math.min(fcTransfer, fbaComing));
+  const slowComing = Math.max(0, fbaComing - fcUnits);
   const series: DayPoint[] = [];
   let fba = fbaAvailable, wh = warehouseOnHand;
   let stockoutDay = -1, belowTargetDay = -1;
@@ -220,7 +231,8 @@ export function projectDoNothing(
   for (const a of openPoArrivals) posByDay.set(a.day, (posByDay.get(a.day) ?? 0) + a.qty);
 
   for (let d = 0; d <= horizonDays; d++) {
-    if (d === comingDay) fba += fbaComing;
+    if (d === fcDays) fba += fcUnits;
+    if (d === comingDay) fba += slowComing;
     if (posByDay.has(d)) wh += posByDay.get(d)!;
     if (belowTargetDay < 0 && fba < fbaTargetUnits) belowTargetDay = d;
     if (stockoutDay < 0 && fba <= 0 && velocity > 0) stockoutDay = d;
