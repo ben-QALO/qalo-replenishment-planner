@@ -133,7 +133,11 @@ export function computeRecommendations(input: EngineInput, today: string): Engin
     // status uses). When overstocked, don't feed the glut forward: never order from China,
     // and don't ship to FBA either — UNLESS FBA would otherwise run dry before a shipment
     // could arrive (cover below the ship leg + safety), where capturing sales still wins.
-    const overstocked = vel.velocity !== null && vel.velocity > 0
+    // For WEARABLE, `total_pipeline` includes the warehouse and open China POs, which are shared with
+    // retail/Shopify — so its "pipeline cover" is not Amazon's and must not drive an OVERSTOCK call.
+    // A smart ring was reported as having 274 weeks of stock purely from the shared pool.
+    const isWearableCat = settings?.category === 'wearable';
+    const overstocked = !isWearableCat && vel.velocity !== null && vel.velocity > 0
       && pipelineCover !== null && pipelineCover > input.overstockFactor * poTargetDays(template);
     const urgentFloorDays = template.fba_ship_checkin_days + template.safety_days;
     const suppressShip = overstocked && fbaCover !== null && fbaCover >= urgentFloorDays;
@@ -145,10 +149,10 @@ export function computeRecommendations(input: EngineInput, today: string): Engin
     // WEARABLE: the shared warehouse number is untrusted, so size the transfer to the full FBA
     // top-up need (uncapped by warehouse). WEARABLE also gets NO prescriptive China PO — its
     // ordering lives in the informative rolling-12-month report (attached after the loop).
-    const isWearable = settings?.category === 'wearable';
     // WEARABLE transfers are sized straight off the forecast curve (see engine/wearable.ts): the
     // demand DURING the 5-week transit and the demand AFTER the shipment lands are summed
     // separately, which is what keeps a smart ring in stock through a seasonal turn.
+    const isWearable = isWearableCat;
     const frac = isWearable ? wearableFrac[sku] : undefined;
     const fc = input.wearableForecast;
     // Overstock suppression is skipped for WEARABLE: `total_pipeline` includes the warehouse and
@@ -186,7 +190,7 @@ export function computeRecommendations(input: EngineInput, today: string): Engin
     if (planning && vel.velocity !== null && vel.velocity > 0) {
       const proj = projectDoNothing(
         vel.velocity, positions.fba_available, positions.fba_coming, positions.warehouse_on_hand,
-        poArrivals, template, PROJECTION_HORIZON_DAYS,
+        poArrivals, template, PROJECTION_HORIZON_DAYS, positions.fc_transfer,
       );
       stockoutDay = proj.stockoutDay;
       if (stockoutDay >= 0) {
@@ -214,7 +218,11 @@ export function computeRecommendations(input: EngineInput, today: string): Engin
       warehouse_on_hand: positions.warehouse_on_hand,
       total_pipeline: positions.total_pipeline,
       fba_days_cover: fbaCover,
-      pipeline_days_cover: pipelineCover,
+      // WEARABLE: total_pipeline counts the warehouse and open China POs, which are shared with
+      // retail/Shopify — so "pipeline cover" is not Amazon's and must not be able to call a smart
+      // ring OVERSTOCK. A ring with 104 days at Amazon was being reported as 274 WEEKS of stock.
+      // Its FBA cover is the only figure that means anything here.
+      pipeline_days_cover: isWearableCat ? fbaCover : pipelineCover,
       recommended_ship_qty: transfer.recommended_ship_qty,
       transfer_required: transfer.required,
       transfer_safe: transfer.safe,
