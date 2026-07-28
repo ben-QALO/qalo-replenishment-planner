@@ -3,7 +3,7 @@ import type Database from 'better-sqlite3';
 import type { EngineInput, EngineOutput, SkuSettings, SnapshotLine, TemplateParams, StockoutDays } from '../engine/types.ts';
 import { computeRecommendations } from '../engine/index.ts';
 import { attributeDemand } from './import/attribute-demand.ts';
-import { getRevision } from './db/connection.ts';
+import { getRevision, today as todayIso } from './db/connection.ts';
 
 export interface SnapshotMeta {
   id: number;
@@ -292,12 +292,19 @@ export function assembleEngineInput(db: Database.Database, overrideTemplateId?: 
     .all() as { year: number; month: number; units: number }[];
   let wearableForecast: EngineInput['wearableForecast'] = null;
   if (forecastRows.length > 0) {
-    const year = forecastRows[0].year;
-    const monthlyUnits = Array(12).fill(0);
-    for (const r of forecastRows) if (r.year === year) monthlyUnits[r.month - 1] = r.units;
+    // Every year on file, so a rolling window that straddles a year boundary reads each month from
+    // ITS OWN year. The anchor year is the one containing today (not simply the newest row): with a
+    // 2026 and a 2027 forecast both entered, "newest" planned 2026 off the 2027 numbers.
+    const byYear: Record<number, number[]> = {};
+    for (const r of forecastRows) {
+      (byYear[r.year] ??= Array(12).fill(0))[r.month - 1] = r.units;
+    }
+    const thisYear = Number(todayIso().slice(0, 4));
+    const year = byYear[thisYear] ? thisYear : forecastRows[0].year;
+    const monthlyUnits = byYear[year] ?? Array(12).fill(0);
     const smartRingSkus = skuRows.filter(r => r.category === 'wearable' && r.wearable_role === 'smart_ring').map(r => r.sku);
     const kit = skuRows.find(r => r.category === 'wearable' && r.wearable_role === 'sizing_kit');
-    wearableForecast = { year, monthlyUnits, smartRingSkus, sizingKitSku: kit?.sku ?? null };
+    wearableForecast = { year, monthlyUnits, byYear, smartRingSkus, sizingKitSku: kit?.sku ?? null };
   }
 
   return {

@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(fly ssh sftp get:*)",
+      "Bash(npm run qa:prod:*)",
+      "Bash(fly status:*)",
+      "Bash(fly releases:*)",
+      "Bash(fly logs:*)"
+    ],
+    "deny": [
+      "Bash(fly ssh sftp put:*)",
+      "Bash(fly ssh sftp shell:*)",
+      "Bash(fly secrets list:*)",
+      "Bash(fly secrets set:*)",
+      "Bash(fly secrets unset:*)"
+    ]
+  }
+}

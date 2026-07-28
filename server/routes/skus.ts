@@ -120,9 +120,12 @@ export function skuRoutes(app: FastifyInstance): void {
       const fc = db.prepare('SELECT year, month, units FROM wearable_forecast ORDER BY year DESC, month ASC')
         .all() as { year: number; month: number; units: number }[];
       if (fc.length > 0) {
-        const year = fc[0].year;
-        const monthlyUnits = Array(12).fill(0);
-        for (const f of fc) if (f.year === year) monthlyUnits[f.month - 1] = f.units;
+        // Same multi-year resolution as assemble.ts, so the chart and the report agree.
+        const byYear: Record<number, number[]> = {};
+        for (const f of fc) (byYear[f.year] ??= Array(12).fill(0))[f.month - 1] = f.units;
+        const thisYear = Number(today().slice(0, 4));
+        const year = byYear[thisYear] ? thisYear : fc[0].year;
+        const monthlyUnits = byYear[year] ?? Array(12).fill(0);
         const meta = new Map((db.prepare(
           'SELECT sku, wearable_role, case_pack, moq, attach_rate_override FROM skus WHERE category = ?',
         ).all('wearable') as any[]).map(r => [r.sku, r]));
@@ -136,7 +139,7 @@ export function skuRoutes(app: FastifyInstance): void {
           }));
         // 6 months out — two China lead times, enough to see the next seasonal turn being built for.
         const horizon = Math.max(0, diffDays(addMonths(firstOfMonth(today()), 6), today()));
-        wearablePlan = projectWearableSku(inputs, { year, monthlyUnits }, today(), sku, horizon);
+        wearablePlan = projectWearableSku(inputs, { year, monthlyUnits, byYear }, today(), sku, horizon);
       }
     }
 

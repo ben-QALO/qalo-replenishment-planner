@@ -158,7 +158,7 @@ export function computeRecommendations(input: EngineInput, today: string): Engin
     let transfer = { required: 0, safe: 0, shortage: 0, recommended_ship_qty: 0 } as ReturnType<typeof recommendTransfer>;
     let forecastRate: number | null = null;
     if (canShip && frac && frac > 0 && fc?.monthlyUnits?.length) {
-      const demand = wearableDemandCurve(frac, { year: fc.year, monthlyUnits: fc.monthlyUnits }, today);
+      const demand = wearableDemandCurve(frac, { year: fc.year, monthlyUnits: fc.monthlyUnits, byYear: fc.byYear }, today);
       const calc = wearableTransferQty({
         demand, day: 0, fbaAvailable: positions.fba_available, fbaComing: positions.fba_coming,
         template, casePack: settings?.case_pack,
@@ -325,7 +325,7 @@ export function computeRecommendations(input: EngineInput, today: string): Engin
     }
     if (wInputs.some(i => i.role === 'smart_ring')) {
       const { reports, rollup, noSplitSignal } = buildWearablePlans(
-        wInputs, { year: forecast.year, monthlyUnits: forecast.monthlyUnits }, today,
+        wInputs, { year: forecast.year, monthlyUnits: forecast.monthlyUnits, byYear: forecast.byYear }, today,
       );
       for (const r of results) {
         const report = reports[r.sku];
