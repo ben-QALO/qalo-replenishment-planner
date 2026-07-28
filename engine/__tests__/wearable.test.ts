@@ -92,7 +92,8 @@ test('attach: kit demand = learned attach rate × aggregate, clamped to [0,2]', 
 // ── monthly ordering + ideal warehouse ────────────────────────────────────────
 
 test('monthly plan: month figures, lead offset and multiplier line up', () => {
-  const { reports } = buildWearablePlans([ring('R', 10)], { year: 2026, monthlyUnits: flat(300) }, '2026-01-15');
+  // velocity 5/day sits below the ~9.7/day forecast, so the actual-sales floor stays out of the way.
+  const { reports } = buildWearablePlans([ring('R', 5)], { year: 2026, monthlyUnits: flat(300) }, '2026-01-15');
   const r = reports['R'];
   const m0 = r.months[0];
 
@@ -103,9 +104,9 @@ test('monthly plan: month figures, lead offset and multiplier line up', () => {
   // An order placed in month 0 lands 3 months later (one China lead).
   assert.equal(m0.order_lands_month, '2026-04');
   assert.equal(m0.order_lands_month, r.months[3].month);
-  // Multiplier: actual run-rate 10×30 = 300/mo, forecast run-rate 300/mo → 1.0.
-  assert.equal(r.actual_run_rate_month, 300);
-  assert.equal(r.multiplier, 1);
+  // Multiplier: actual run-rate 5×30 = 150/mo against a 300/mo forecast → 2.0.
+  assert.equal(r.actual_run_rate_month, 150);
+  assert.equal(r.multiplier, 2);
 });
 
 test('ONE SOURCE OF TRUTH: the monthly report equals the projection it is read from', () => {
@@ -323,7 +324,7 @@ test('multi-year forecast: each month reads its OWN year, not just the newest on
   const y2026 = Array(12).fill(100);
   const y2027 = Array(12).fill(900);
   const { reports } = buildWearablePlans(
-    [ring('R', 10)],
+    [ring('R', 0)],   // no sales, so the actual-sales floor can't mask the year lookup
     { year: 2026, monthlyUnits: y2026, byYear: { 2026: y2026, 2027: y2027 } },
     '2026-11-15',
   );
@@ -343,7 +344,7 @@ test('multi-year forecast: each month reads its OWN year, not just the newest on
 test('multi-year forecast: a year with nothing entered still reuses last year and says so', () => {
   const y2026 = Array(12).fill(100);
   const { reports } = buildWearablePlans(
-    [ring('R', 10)],
+    [ring('R', 0)],   // no sales, so the actual-sales floor can't mask the year lookup
     { year: 2026, monthlyUnits: y2026, byYear: { 2026: y2026 } },   // no 2027 on file
     '2026-11-15',
   );
@@ -352,6 +353,25 @@ test('multi-year forecast: a year with nothing entered still reuses last year an
   assert.equal(m[2].month, '2027-01');
   assert.ok((m[2].flags ?? []).includes('FORECAST_EXTRAPOLATED'), 'Jan 2027 has no forecast — must be flagged');
   assert.equal(m[2].forecast_demand, 100, 'and falls back to the same month last year');
+});
+
+test('actual-sales floor: never plan below what a SKU is demonstrably selling', () => {
+  // Real data: every one of 25 wearables was forecast BELOW its actual sales rate, so the ring sizer
+  // got a "60-day" shelf goal that covered only 42 real days. Planning under proven demand is the one
+  // error you discover by stocking out, so the demand curve floors at the observed rate.
+  const quiet = flat(150);           // 150/mo ≈ 4.9/day forecast
+  const sellingFaster = 10;          // but actually selling 10/day
+  const { reports } = buildWearablePlans([ring('R', sellingFaster)], { year: 2026, monthlyUnits: quiet }, '2026-01-15');
+  const m0 = reports['R'].months[0];
+  assert.ok(m0.forecast_demand >= 10 * 30, `planned demand ${m0.forecast_demand} must reach the ~300/mo actually selling`);
+  assert.ok((m0.flags ?? []).includes('PLANNED_AT_ACTUAL'), 'and must say it was lifted to actual sales');
+
+  // The floor must NOT flatten a genuine seasonal peak — a forecast above actual still wins.
+  const peaky = [150, 150, 150, 150, 150, 150, 150, 150, 150, 150, 3000, 3000];
+  const peak = buildWearablePlans([ring('R', sellingFaster)], { year: 2026, monthlyUnits: peaky }, '2026-01-15');
+  const nov = peak.reports['R'].months.find(m => m.month === '2026-11')!;
+  assert.ok(nov.forecast_demand > 2500, `Nov must still follow the forecast, got ${nov.forecast_demand}`);
+  assert.ok(!(nov.flags ?? []).includes('PLANNED_AT_ACTUAL'), 'the forecast wins in a peak month');
 });
 
 // ── the closed loop: China orders ↔ warehouse ↔ transfers ↔ FBA ───────────────

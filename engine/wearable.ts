@@ -99,6 +99,15 @@ export function wearableDemandCurve(
   demandFrac: number,
   forecast: WearableForecast,
   today: string,
+  /**
+   * The SKU's observed sales rate, used as a FLOOR. A board forecast goes stale: on real data every
+   * one of 25 wearables was forecast below what it was actually selling (portfolio at 0.75x), so the
+   * ring sizer was handed a 60-day shelf goal that covered only 42 real days. Planning below
+   * demonstrated demand is the one error that cannot be recovered from — you find out by stocking
+   * out. Taking the higher of the two keeps seasonal build-ahead (a Nov forecast far exceeds today's
+   * rate, so the forecast still wins there) while never under-shipping a proven seller.
+   */
+  floorPerDay = 0,
 ): (dayOffset: number) => number {
   return (dayOffset: number) => {
     const d = addDays(today, dayOffset);
@@ -107,7 +116,7 @@ export function wearableDemandCurve(
     // Prefer that calendar year's own forecast; only reuse the anchor year when it has none.
     const months = forecast.byYear?.[y] ?? forecast.monthlyUnits;
     const units = (months[mo - 1] ?? 0) * demandFrac;
-    return units / daysInMonth(y, mo);
+    return Math.max(units / daysInMonth(y, mo), Math.max(0, floorPerDay));
   };
 }
 
@@ -192,6 +201,8 @@ export function simulateWearableSku(opts: {
   template: TemplateParams;
   casePack?: number | null;
   moq?: number | null;
+  /** Observed units/day for this SKU; the plan never targets less than this (see wearableDemandCurve). */
+  actualPerDay?: number;
   today: string;
   horizonDays: number;
 }): WearablePlan {
@@ -200,7 +211,7 @@ export function simulateWearableSku(opts: {
   const review = Math.max(1, Math.round(t.review_period_fba_days));
   const settings = { classification: 'replenishable' as const, case_pack: opts.casePack ?? null, moq: opts.moq ?? null };
 
-  const demand = wearableDemandCurve(demandFrac, forecast, today);
+  const demand = wearableDemandCurve(demandFrac, forecast, today, opts.actualPerDay ?? 0);
   const lead = chinaLeadDays(t);
   const poReview = Math.max(1, Math.round(t.review_period_po_days));
   // Transfers must be known past the display horizon, because an order placed near the end of the
@@ -385,8 +396,13 @@ export function buildWearablePlans(
     const simDays = Math.max(0, diffDays(addMonths(monthStart, N), today));
     const plan = simulateWearableSku({
       demandFrac, forecast, fbaAvailable: i.fba_available, fbaComing: i.fba_coming,
-      template: t, casePack: cp, moq: i.moq ?? null, today, horizonDays: simDays,
+      template: t, casePack: cp, moq: i.moq ?? null, actualPerDay: posVel(i.velocity),
+      today, horizonDays: simDays,
     });
+    // The demand actually planned for, month by month — the forecast lifted to the observed sales
+    // rate where the forecast had fallen behind. Reported instead of the raw forecast so the table's
+    // demand column explains the quantities beside it.
+    const plannedDemand = wearableDemandCurve(demandFrac, forecast, today, posVel(i.velocity));
 
     const sumByMonth = <T extends { date: string; qty: number }>(events: T[]) => {
       const m = new Map<string, number>();
@@ -410,10 +426,18 @@ export function buildWearablePlans(
       const pt = pointAt(m);
       // Flag a month whose own forecast is a seasonal reuse of last year's number (past the forecast year).
       const flags: string[] = extrap[m] ? ['FORECAST_EXTRAPOLATED'] : [];
+      // Demand planned across this calendar month, after the actual-sales floor. NOT clamped to
+      // today: the current month starts before today, and clamping made month 0 sum a 31-day window
+      // running into the next month. The demand curve accepts negative offsets, so ask for the real
+      // calendar month.
+      const mStart = diffDays(mDates[m], today);
+      const mDays = daysInMonth(Number(mDates[m].slice(0, 4)), Number(mDates[m].slice(5, 7)));
+      const planned = Math.round(sumDemand(plannedDemand, mStart, mDays));
+      if (planned > Math.round(d[m]) + 1) flags.push('PLANNED_AT_ACTUAL');
       cumulative += pull;
       months.push({
         month: key,
-        forecast_demand: Math.round(d[m]),
+        forecast_demand: planned,
         fba_target_units: pt?.goal ?? 0,
         expected_transfer: pull,
         cumulative_transfer: cumulative,
@@ -479,6 +503,7 @@ export function projectWearableSku(
     demandFrac, forecast,
     fbaAvailable: target.fba_available, fbaComing: target.fba_coming,
     template: target.template, casePack: target.case_pack ?? null, moq: target.moq ?? null,
+    actualPerDay: posVel(target.velocity),
     today, horizonDays,
   });
 }
