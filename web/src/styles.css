@@ -619,6 +619,24 @@ tr.ship-group td { padding: 0; background: var(--surface-2); border-bottom: 1px 
 .wear-fc-cell input { width: 100%; text-align: right; }
 .wear-forecast-foot { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
 .wear-forecast-foot .spacer { flex: 1; }
+
+/* Forecast editor: months are entered directly, so each cell has to say which month it is and
+   whether it is doing anything. */
+.wear-fc-hint { font-size: 12px; line-height: 1.55; color: var(--ink-2); margin: 0 2px 14px; max-width: 760px; }
+.wear-fc-label { font-family: var(--display); font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--muted); margin: 14px 2px 7px; }
+.wear-fc-label:first-of-type { margin-top: 0; }
+/* Months past the plan window still matter (orders placed then land after it), but they are context. */
+.wear-forecast-grid.ahead { opacity: .72; }
+/* A month with nothing in it gets estimated by the engine — visible before saving, but this is a
+   heads-up rather than a fault, so it stays in the monochrome range. Red is reserved for a real
+   failure (the save itself), because on a stale forecast most months read "below actual" and a grid
+   of red would just be noise. */
+.wear-fc-cell.blank input { border-color: var(--hairline-2); background: var(--surface-2); }
+.wear-fc-cell.blank span { color: var(--faint); }
+.wear-fc-cell em { font-style: normal; font-size: 9.5px; color: var(--muted); letter-spacing: .02em; }
+.wear-fc-warn { color: var(--ink-2); }
+.wear-fc-error { font-size: 12px; line-height: 1.5; color: var(--danger); margin: 10px 2px 0; }
 @media (max-width: 720px) { .wear-forecast-grid { grid-template-columns: repeat(3, 1fr); } .wear-intro { flex-direction: column; } }
 
 /* ── Smart-ring forward projection chart ───────────────────────────────────── */

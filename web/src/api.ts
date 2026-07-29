@@ -81,7 +81,15 @@ export interface SkuSettingsRow {
   category?: 'core' | 'wearable'; wearable_role?: 'smart_ring' | 'sizing_kit' | null; attach_rate_override?: number | null;
 }
 
-export interface ForecastResponse { year: number; monthlyUnits: number[]; years: number[]; }
+/** One month of the smart-ring forecast. `entered` is false when nothing is on file for it yet, so
+ *  the engine falls back to reusing the same month of another year (shown as "est."). */
+export interface ForecastMonth { month: string; units: number; entered: boolean; in_plan_window: boolean; }
+export interface ForecastResponse {
+  months: ForecastMonth[];
+  plan_months: number;    // how many of those months the plan window covers (12)
+  lead_months: number;    // extra months needed beyond it, because orders land a China lead later
+  months_on_file: number;
+}
 
 async function handle<T>(res: Response): Promise<T> {
   if (!res.ok) {
