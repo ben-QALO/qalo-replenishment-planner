@@ -243,7 +243,7 @@ export function Imports({ refresh }: { refresh: () => void }) {
         </div>
         {mapResult && (
           <div className="card" style={{ marginTop: 10, padding: '10px 14px', fontSize: 12.5 }}>
-            <b>{mapResult.rows_in_file}</b> products mapped · <b>{mapResult.matched_to_catalog}</b> matched to your FBA catalog · <b>{mapResult.amazon_differs_from_qalo}</b> have an Amazon SKU that differs from the QALO SKU{mapResult.skipped ? ` · ${mapResult.skipped} blank rows skipped` : ''}.
+            <b>{mapResult.rows_in_file}</b> products mapped · <b>{mapResult.matched_to_catalog}</b> matched to your FBA catalog · <b>{mapResult.amazon_differs_from_qalo}</b> have an Amazon SKU that differs from the QALO SKU{mapResult.skipped ? ` · ${mapResult.skipped} blank rows skipped` : ''}{mapResult.kept_manual ? ` · ${mapResult.kept_manual} hand-typed mapping${mapResult.kept_manual === 1 ? '' : 's'} kept` : ''}.
           </div>
         )}
 

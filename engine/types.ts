@@ -169,7 +169,14 @@ export interface SkuResult {
   classification: Classification;
   fulfillment_channel: 'fba' | 'fbm';
 
-  velocity: number | null;        // units/day, after growth multiplier
+  velocity: number | null;        // units/day, after growth multiplier — ROUNDED to 2dp for display
+  /**
+   * The same rate at full precision. `velocity` is rounded for the UI, and anything that FEEDS
+   * FURTHER MATH must use this instead: rounding 0.8333→0.83 shifts a WEARABLE SKU's share of the
+   * forecast just enough to move a transfer by a unit, which made the ordering report disagree with
+   * the Ship-to-FBA queue on the same product. Round at the edges, never mid-calculation.
+   */
+  velocity_exact: number | null;
   base_velocity: number | null;   // before growth multiplier
   velocity_source: VelocitySource;
   velocity_confidence: VelocityConfidence;

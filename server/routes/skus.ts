@@ -5,6 +5,7 @@ import { projectPlan } from '../../engine/projection.ts';
 import { chinaLeadDays } from '../../engine/replenishment.ts';
 import { diffDays, addMonths, firstOfMonth } from '../../engine/dates.ts';
 import { projectWearableSku } from '../../engine/wearable.ts';
+import { wearableInputs } from '../wearable-inputs.ts';
 
 const PATCHABLE = [
   'classification', 'case_pack', 'moq', 'order_multiple',
@@ -49,6 +50,43 @@ function applyPatch(sku: string, patch: Record<string, unknown>): boolean {
   return res.changes > 0;
 }
 
+// The QALO SKU does NOT live on the skus table — it lives in the master identity map
+// (sku_map), the spine that joins the NetSuite warehouse report (keyed by QALO SKU) to the
+// Amazon listing (keyed by Amazon SKU). Editing it here upserts that map and marks the row
+// 'manual', so re-importing the mapping CSV keeps the hand-made mapping instead of wiping it.
+function applyQaloSku(amazonSku: string, raw: unknown): { changed: boolean; error?: string } {
+  const db = getDb();
+  const qalo = typeof raw === 'string' ? raw.trim() : '';
+  const existing = db.prepare('SELECT qalo_sku, asin FROM sku_map WHERE amazon_sku = ?').get(amazonSku) as any;
+  if ((existing?.qalo_sku ?? '') === qalo) return { changed: false };
+
+  if (!qalo) {
+    db.prepare('DELETE FROM sku_map WHERE amazon_sku = ?').run(amazonSku);
+    return { changed: true };
+  }
+  // One QALO SKU ↔ one Amazon SKU. Refuse a mapping that would steal another listing's QALO SKU.
+  const taken = db.prepare('SELECT amazon_sku FROM sku_map WHERE qalo_sku = ?').get(qalo) as any;
+  if (taken?.amazon_sku && taken.amazon_sku !== amazonSku) {
+    return { changed: false, error: `QALO SKU ${qalo} is already mapped to Amazon SKU ${taken.amazon_sku}. Clear that mapping first.` };
+  }
+  const asin = existing?.asin ?? (db.prepare('SELECT asin FROM skus WHERE sku = ?').get(amazonSku) as any)?.asin ?? null;
+  db.transaction(() => {
+    db.prepare('DELETE FROM sku_map WHERE amazon_sku = ?').run(amazonSku);
+    db.prepare(`INSERT INTO sku_map (qalo_sku, amazon_sku, asin, source_file, updated_at)
+      VALUES (?, ?, ?, 'manual', ?) ON CONFLICT(qalo_sku) DO UPDATE SET
+        amazon_sku = excluded.amazon_sku, asin = COALESCE(excluded.asin, sku_map.asin),
+        source_file = 'manual', updated_at = excluded.updated_at`).run(qalo, amazonSku, asin, nowIso());
+  })();
+  return { changed: true };
+}
+
+// The map's ASIN outranks skus.asin everywhere (see assemble.ts), so a hand-edited ASIN has to
+// land on the map row too or the edit would look ignored.
+function syncMapAsin(amazonSku: string, raw: unknown): void {
+  const asin = typeof raw === 'string' ? (raw.trim().toUpperCase() || null) : null;
+  getDb().prepare('UPDATE sku_map SET asin = ?, updated_at = ? WHERE amazon_sku = ?').run(asin, nowIso(), amazonSku);
+}
+
 export function skuRoutes(app: FastifyInstance): void {
   // Full computed results — the All SKUs table and the dashboard queues read this.
   app.get('/api/skus', () => {
@@ -71,6 +109,12 @@ export function skuRoutes(app: FastifyInstance): void {
     const result = output?.results.find(r => r.sku === sku) ?? null;
     const row = db.prepare('SELECT * FROM skus WHERE sku = ?').get(sku) as any;
     if (row?.param_overrides) row.param_overrides = JSON.parse(row.param_overrides);
+    // Identity map values are what the rest of the tool uses, so the editor must show those.
+    if (row) {
+      const m = db.prepare('SELECT qalo_sku, asin FROM sku_map WHERE amazon_sku = ?').get(sku) as any;
+      row.qalo_sku = m?.qalo_sku ?? null;
+      row.asin = m?.asin ?? row.asin;
+    }
 
     const history = db.prepare(`SELECT s.snapshot_date, sl.available, sl.reserved,
         sl.inbound_working + sl.inbound_shipped + sl.inbound_received AS inbound,
@@ -117,29 +161,11 @@ export function skuRoutes(app: FastifyInstance): void {
     // and the warehouse treated as unlimited (what it reports is Amazon's DEMAND on the warehouse).
     let wearablePlan = null;
     if (result?.category === 'wearable' && output) {
-      const fc = db.prepare('SELECT year, month, units FROM wearable_forecast ORDER BY year DESC, month ASC')
-        .all() as { year: number; month: number; units: number }[];
-      if (fc.length > 0) {
-        // Same multi-year resolution as assemble.ts, so the chart and the report agree.
-        const byYear: Record<number, number[]> = {};
-        for (const f of fc) (byYear[f.year] ??= Array(12).fill(0))[f.month - 1] = f.units;
-        const thisYear = Number(today().slice(0, 4));
-        const year = byYear[thisYear] ? thisYear : fc[0].year;
-        const monthlyUnits = byYear[year] ?? Array(12).fill(0);
-        const meta = new Map((db.prepare(
-          'SELECT sku, wearable_role, case_pack, moq, attach_rate_override FROM skus WHERE category = ?',
-        ).all('wearable') as any[]).map(r => [r.sku, r]));
-        const inputs = output.results
-          .filter(r => r.category === 'wearable' && (meta.get(r.sku)?.wearable_role === 'smart_ring' || meta.get(r.sku)?.wearable_role === 'sizing_kit'))
-          .map(r => ({
-            sku: r.sku, role: meta.get(r.sku)!.wearable_role as 'smart_ring' | 'sizing_kit',
-            velocity: r.velocity, fba_available: r.fba_available, fba_coming: r.fba_coming,
-            template: r.template, case_pack: meta.get(r.sku)?.case_pack ?? null,
-            moq: meta.get(r.sku)?.moq ?? null, attach_rate_override: meta.get(r.sku)?.attach_rate_override ?? null,
-          }));
+      const w = wearableInputs(db, output, today());
+      if (w) {
         // 6 months out — two China lead times, enough to see the next seasonal turn being built for.
         const horizon = Math.max(0, diffDays(addMonths(firstOfMonth(today()), 6), today()));
-        wearablePlan = projectWearableSku(inputs, { year, monthlyUnits, byYear }, today(), sku, horizon);
+        wearablePlan = projectWearableSku(w.inputs, w.forecast, today(), sku, horizon);
       }
     }
 
@@ -148,7 +174,14 @@ export function skuRoutes(app: FastifyInstance): void {
 
   app.patch('/api/skus/:sku', (req, reply) => {
     const { sku } = req.params as { sku: string };
-    const changed = applyPatch(sku, (req.body ?? {}) as Record<string, unknown>);
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    let changed = applyPatch(sku, body);
+    if ('asin' in body) syncMapAsin(sku, body.asin);
+    if ('qalo_sku' in body) {
+      const res = applyQaloSku(sku, body.qalo_sku);
+      if (res.error) return reply.code(409).send({ error: res.error });
+      changed = changed || res.changed;
+    }
     if (!changed) return reply.code(400).send({ error: 'nothing to update or unknown SKU' });
     bumpRevision();
     return { ok: true };

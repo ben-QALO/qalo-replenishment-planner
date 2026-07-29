@@ -10,6 +10,19 @@ language, avoid unexplained jargon, and confirm before anything destructive or
 outward-facing (deploys, pushing to GitHub, deleting data). Prefer showing results
 (screenshots, verified behavior) over describing them.
 
+## ALWAYS work from the real, current data
+Standing instruction from Benoit (2026-07-29), with blanket permission granted — don't ask each time.
+**Never analyse, demo, or draw conclusions from invented sample data.** The local `data/replen.db` is
+usually empty; production is the source of truth. Pull a read-only copy first:
+```
+npm run qa:prod              # fresh copy from Fly + serve the app on :8788 (never writes to prod)
+npm run qa:prod -- --no-pull # re-serve the copy already in data/qa-prod/
+```
+Invented samples have repeatedly produced wrong conclusions — a 4-SKU mock said nothing useful about a
+real catalogue of per-size wearable SKUs. If a sandbox or permission block prevents the pull, **say so
+immediately** instead of quietly falling back to made-up numbers. If synthetic data is ever shown,
+label it as synthetic.
+
 ## Run it locally
 Two processes; the web dev server proxies `/api` to the API server.
 ```
@@ -45,6 +58,15 @@ In dev, open **localhost:5173** (has live edits). localhost:8787 serves the *bui
   sent/placed. `requested_qty` preserves the original ask for the audit trail. POs use a
   `review_state` column (`proposed`/`reviewed`/null) alongside `status` to avoid rebuilding the
   status CHECK constraint.
+- **WEARABLE inventory-team export** (`server/export/wearable-xlsx.ts`, route
+  `/api/exports/wearable-plan.xlsx`): the Excel workbook the China-PO team plans from. Tabs: Read me
+  (how each number is derived) · Allocate now (the headline — `warehouse_prefill_needed`, the units of
+  stock already held that must be earmarked for Amazon) · China orders 12mo · Monthly demand 12mo ·
+  FBA transfers every 2 weeks (SKU rows × fortnight columns) · one detail tab per SKU showing the full
+  chain. It **replaces** the old input, which was "what the Amazon team expects to request over the
+  next 4 months" — that described the shelf, not the customer, and lagged a ramp by the whole China
+  lead. All inputs come from `server/wearable-inputs.ts`, shared with the SKU-detail chart, so the
+  export, the chart and the Ship-to-FBA queue cannot disagree.
 - **Case-pack rule** (`recommendTransfer`): prefer whole cases, but ship a **partial** rather
   than nothing when the warehouse can't fill a full case (e.g. 43 of a 50-case → ship 43); for
   slow movers, ship up to a **6-month cover cap** instead of skipping.

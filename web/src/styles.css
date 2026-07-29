@@ -598,6 +598,10 @@ tr.ship-group td { padding: 0; background: var(--surface-2); border-bottom: 1px 
 .wear-intro { display: flex; gap: 16px; align-items: flex-start; padding: 4px 2px 12px; border-bottom: 1px solid var(--hairline); margin-bottom: 14px; }
 .wear-intro p { font-size: 12.5px; line-height: 1.55; color: var(--ink-2); margin: 0; flex: 1; }
 .wear-intro .btn { flex-shrink: 0; }
+/* The export is the page's main deliverable, so it gets its own column beside the explainer. */
+.wear-intro-actions { flex: 0 0 260px; display: flex; flex-direction: column; align-items: stretch; gap: 8px; }
+.wear-intro-hint { font-size: 11px; line-height: 1.45; color: var(--muted); }
+.wear-intro-hint b { color: var(--ink-2); }
 .wear-section-title { display: flex; align-items: center; gap: 10px; font-family: var(--display); font-size: 11.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 6px 0 8px; }
 .wear-section-title .spacer { flex: 1; }
 .wear-variants, .wear-months { width: 100%; }

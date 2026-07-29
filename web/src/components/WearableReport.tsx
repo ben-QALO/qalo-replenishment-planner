@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { api, fmtInt, fmtNum, type SkuResult, type WearableRollup, type WearableMonth, type ForecastResponse } from '../api.ts';
-import { toast, downloadCsv } from './ui.tsx';
+import { toast, downloadCsv, downloadFromApi } from './ui.tsx';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const prettyMonth = (ym: string) => { const [y, m] = ym.split('-'); return `${MONTHS[Number(m) - 1]} ${y}`; };
@@ -24,6 +24,18 @@ export function WearableReport({ results, rollup, refresh, openSku }: {
 
   const [view, setView] = useState<string>('rollup');   // 'rollup' | a sku
   const [editing, setEditing] = useState(false);
+  const [exporting, setExporting] = useState(false);
+
+  // The workbook the inventory team plans from: what to order from China per SKU per month, what to
+  // earmark for Amazon out of stock already held, and the fortnightly FBA pull behind both.
+  async function exportWorkbook() {
+    setExporting(true);
+    try {
+      await downloadFromApi('/api/exports/wearable-plan.xlsx', 'smart-ring-ordering-plan.xlsx');
+      toast('Excel plan downloaded — ready to send to the inventory team.');
+    } catch (err: any) { toast(`Export failed: ${err.message}`); }
+    finally { setExporting(false); }
+  }
 
   if (rows.length === 0) {
     return (
@@ -65,7 +77,16 @@ export function WearableReport({ results, rollup, refresh, openSku }: {
           shared across channels, so it's <b>not</b> used here — these are Amazon needs only. Transfers to FBA still
           run through the normal worksheet (the <b>Ship to FBA</b> tab).
         </p>
-        <button className="btn sm" onClick={() => setEditing(e => !e)}>{editing ? 'Hide forecast' : 'Edit forecast'}</button>
+        <div className="wear-intro-actions">
+          <button className="btn sm primary" disabled={exporting} onClick={exportWorkbook}>
+            {exporting ? 'Building…' : 'Export for inventory team (Excel)'}
+          </button>
+          <button className="btn sm" onClick={() => setEditing(e => !e)}>{editing ? 'Hide forecast' : 'Edit forecast'}</button>
+          <span className="wear-intro-hint">
+            Multi-tab workbook: what to earmark for Amazon <b>now</b>, 12 months of China orders, the
+            monthly demand behind them, and the every-2-weeks FBA pull — with how each number was worked out.
+          </span>
+        </div>
       </div>
 
       {editing && <ForecastEditor onClose={() => setEditing(false)} refresh={refresh} />}
@@ -125,7 +146,9 @@ export function WearableReport({ results, rollup, refresh, openSku }: {
             </button>
           ))}
         </div>
-        <button className="btn sm" onClick={exportCsv}>Export CSV</button>
+        <button className="btn sm" onClick={exportCsv} title="Just this one table as a CSV. For the full workbook the inventory team plans from, use “Export for inventory team” above.">
+          Copy this table (CSV)
+        </button>
       </div>
       <div style={{ overflowX: 'auto' }}>
         <table className="data wear-months">
