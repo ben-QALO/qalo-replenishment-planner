@@ -58,6 +58,14 @@ In dev, open **localhost:5173** (has live edits). localhost:8787 serves the *bui
   sent/placed. `requested_qty` preserves the original ask for the audit trail. POs use a
   `review_state` column (`proposed`/`reviewed`/null) alongside `status` to avoid rebuilding the
   status CHECK constraint.
+- **WEARABLE forecast is entered BY MONTH, not by year** (`server/routes/forecast.ts`, the editor in
+  `WearableReport.tsx`). The plan window is a rolling 12 months, so it straddles two calendar years.
+  The old year-at-a-time editor made that the user's problem and lost data doing it: `GET` answered
+  with whichever year was *highest* on file (so it always opened on next year, never the year just
+  edited — saves looked like they had failed), and changing the year field did not reload that year's
+  figures, so saving wrote the previous year's numbers over the year typed, silently. The API now
+  addresses real `YYYY-MM` months over `plan + china-lead + 1` of them, and a save only touches the
+  months it sends. There is no year field left to get wrong.
 - **WEARABLE inventory-team export** (`server/export/wearable-xlsx.ts`, route
   `/api/exports/wearable-plan.xlsx`): the Excel workbook the China-PO team plans from. Tabs: Read me
   (how each number is derived) · Allocate now (the headline — `warehouse_prefill_needed`, the units of
@@ -100,6 +108,8 @@ mounted volume (`DATA_DIR`). See `DEPLOY.md`.
 
 ## Known gaps (not yet done — a pro team would add these)
 - No CI (tests don't run automatically on push) and no type-check step (Vite/esbuild skips it).
-- Automated tests cover the engine well but **not** the API routes or the React UI.
+- Automated tests cover the engine well; API routes are only starting to be covered
+  (`server/routes/__tests__/forecast.test.ts` uses Fastify `inject` + a temp `DATA_DIR` — copy that
+  pattern for others). The React UI has no tests.
 - `main` has no branch protection; no production error monitoring.
 - Business-Report window is assumed 30 days (no selector yet).
