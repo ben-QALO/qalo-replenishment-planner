@@ -2,7 +2,9 @@
 
 export interface SkuResult {
   sku: string; qalo_sku: string; asin: string | null; title: string; classification: string; fulfillment_channel: 'fba' | 'fbm';
-  velocity: number | null; base_velocity: number | null;
+  // `velocity` is rounded to 2dp for display; `velocity_exact` is the same rate at full precision and
+  // is what any further calculation must use (see SkuResult.velocity_exact in engine/types.ts).
+  velocity: number | null; velocity_exact: number | null; base_velocity: number | null;
   velocity_source: string; velocity_confidence: string; growth_multiplier: number;
   window_rates: { r7: number | null; r30: number | null; r60: number | null; r90: number | null };
   fba_available: number; fba_reserved: number; fba_inbound: number; fc_transfer: number;

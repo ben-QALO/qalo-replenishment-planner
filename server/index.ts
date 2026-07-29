@@ -19,6 +19,7 @@ import { keepListRoutes } from './routes/keeplist.ts';
 import { businessReportRoutes } from './routes/business-report.ts';
 import { skuMapRoutes } from './routes/sku-map.ts';
 import { forecastRoutes } from './routes/forecast.ts';
+import { wearableExportRoutes } from './routes/wearable-export.ts';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const WEB_DIST = join(ROOT, 'web', 'dist');
@@ -69,6 +70,7 @@ keepListRoutes(app);
 businessReportRoutes(app);
 skuMapRoutes(app);
 forecastRoutes(app);
+wearableExportRoutes(app);
 
 if (existsSync(join(WEB_DIST, 'index.html'))) {
   await app.register(fastifyStatic, { root: WEB_DIST });

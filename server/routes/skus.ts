@@ -5,6 +5,7 @@ import { projectPlan } from '../../engine/projection.ts';
 import { chinaLeadDays } from '../../engine/replenishment.ts';
 import { diffDays, addMonths, firstOfMonth } from '../../engine/dates.ts';
 import { projectWearableSku } from '../../engine/wearable.ts';
+import { wearableInputs } from '../wearable-inputs.ts';
 
 const PATCHABLE = [
   'classification', 'case_pack', 'moq', 'order_multiple',
@@ -160,29 +161,11 @@ export function skuRoutes(app: FastifyInstance): void {
     // and the warehouse treated as unlimited (what it reports is Amazon's DEMAND on the warehouse).
     let wearablePlan = null;
     if (result?.category === 'wearable' && output) {
-      const fc = db.prepare('SELECT year, month, units FROM wearable_forecast ORDER BY year DESC, month ASC')
-        .all() as { year: number; month: number; units: number }[];
-      if (fc.length > 0) {
-        // Same multi-year resolution as assemble.ts, so the chart and the report agree.
-        const byYear: Record<number, number[]> = {};
-        for (const f of fc) (byYear[f.year] ??= Array(12).fill(0))[f.month - 1] = f.units;
-        const thisYear = Number(today().slice(0, 4));
-        const year = byYear[thisYear] ? thisYear : fc[0].year;
-        const monthlyUnits = byYear[year] ?? Array(12).fill(0);
-        const meta = new Map((db.prepare(
-          'SELECT sku, wearable_role, case_pack, moq, attach_rate_override FROM skus WHERE category = ?',
-        ).all('wearable') as any[]).map(r => [r.sku, r]));
-        const inputs = output.results
-          .filter(r => r.category === 'wearable' && (meta.get(r.sku)?.wearable_role === 'smart_ring' || meta.get(r.sku)?.wearable_role === 'sizing_kit'))
-          .map(r => ({
-            sku: r.sku, role: meta.get(r.sku)!.wearable_role as 'smart_ring' | 'sizing_kit',
-            velocity: r.velocity, fba_available: r.fba_available, fba_coming: r.fba_coming,
-            template: r.template, case_pack: meta.get(r.sku)?.case_pack ?? null,
-            moq: meta.get(r.sku)?.moq ?? null, attach_rate_override: meta.get(r.sku)?.attach_rate_override ?? null,
-          }));
+      const w = wearableInputs(db, output, today());
+      if (w) {
         // 6 months out — two China lead times, enough to see the next seasonal turn being built for.
         const horizon = Math.max(0, diffDays(addMonths(firstOfMonth(today()), 6), today()));
-        wearablePlan = projectWearableSku(inputs, { year, monthlyUnits, byYear }, today(), sku, horizon);
+        wearablePlan = projectWearableSku(w.inputs, w.forecast, today(), sku, horizon);
       }
     }
 

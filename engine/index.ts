@@ -261,6 +261,7 @@ export function computeRecommendations(input: EngineInput, today: string): Engin
       classification,
       fulfillment_channel: isFbm ? 'fbm' : 'fba',
       velocity: vel.velocity === null ? null : round2(vel.velocity),
+      velocity_exact: vel.velocity,
       base_velocity: vel.base_velocity === null ? null : round2(vel.base_velocity),
       velocity_source: vel.source,
       velocity_confidence: vel.confidence,
@@ -327,8 +328,12 @@ export function computeRecommendations(input: EngineInput, today: string): Engin
       const role = input.skuSettings[r.sku]?.wearable_role;
       if (role !== 'smart_ring' && role !== 'sizing_kit') continue;
       wInputs.push({
-        sku: r.sku, role, velocity: r.velocity, fba_available: r.fba_available, fba_coming: r.fba_coming, template: r.template,
-        case_pack: input.skuSettings[r.sku]?.case_pack, attach_rate_override: input.skuSettings[r.sku]?.attach_rate_override,
+        // velocity_exact, NOT the display-rounded velocity: the forecast split and the actual-sales
+        // floor are both derived from it, and the queue above uses full precision. Feeding the
+        // rounded figure here made this report ship a different quantity than the queue did.
+        sku: r.sku, role, velocity: r.velocity_exact, fba_available: r.fba_available, fba_coming: r.fba_coming, template: r.template,
+        case_pack: input.skuSettings[r.sku]?.case_pack, moq: input.skuSettings[r.sku]?.moq,
+        attach_rate_override: input.skuSettings[r.sku]?.attach_rate_override,
       });
     }
     if (wInputs.some(i => i.role === 'smart_ring')) {

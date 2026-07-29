@@ -3,10 +3,11 @@ import assert from 'node:assert/strict';
 import { recommendTransfer } from '../projection.ts';
 import {
   buildWearablePlans, simulateWearableSku, wearableDemandFractions, wearableDemandCurve,
-  wearableTransferQty, type WearableSkuInput, type WearableRateInput,
+  wearableTransferQty, projectWearableSku, type WearableSkuInput, type WearableRateInput,
 } from '../wearable.ts';
+import { computeRecommendations } from '../index.ts';
 import { diffDays } from '../dates.ts';
-import { settings } from './helpers.ts';
+import { settings, input, line, TODAY } from './helpers.ts';
 import type { TemplateParams } from '../types.ts';
 
 // A smart-ring supply chain: 90-day China lead (60+25+5), 35-day transfer leg, 60-day FBA goal,
@@ -440,4 +441,94 @@ test('rollup: months are element-wise sums of the per-SKU months', () => {
     );
   }
   assert.deepEqual(rollup.skus, ['R1', 'R2']);
+});
+
+// ── the report and the Ship-to-FBA queue must size identically ───────────────
+//
+// These are two different code paths over the same product: `computeRecommendations` sizes the queue
+// inline at full precision, while the rolling-12-month report is built afterwards from the SkuResult
+// list. When that hand-off passed the DISPLAY-ROUNDED velocity, a SKU selling 0.8333/day was split off
+// the forecast as if it sold 0.83 — enough to move its transfer by a unit, so the ordering report (and
+// the Excel export built from it) told the team to ship 19 while the queue said 20.
+//
+// Velocities below are deliberately non-terminating (5/7/25 units over the windows) so rounding to 2dp
+// actually loses information — with tidy numbers this test would pass either way and guard nothing.
+
+const wearSettings = (role: 'smart_ring' | 'sizing_kit') =>
+  settings({ category: 'wearable', wearable_role: role, case_pack: 1, moq: 1 });
+
+/** A wearable engine input whose velocities do not survive 2dp rounding. */
+function wearableEngineInput() {
+  const win = (perWeek: number) => ({
+    units_shipped_t7: perWeek, units_shipped_t30: perWeek * 4,
+    units_shipped_t60: perWeek * 8, units_shipped_t90: perWeek * 12,
+  });
+  return input({
+    snapshotDate: TODAY,
+    lines: [
+      line({ sku: 'W-06', available: 60, inbound_shipped: 1, ...win(5) }),   // 0.714…/day
+      line({ sku: 'W-09', available: 60, ...win(25) }),                      // 3.571…/day
+      line({ sku: 'W-13', available: 20, ...win(7) }),                       // 1.0/day
+      line({ sku: 'W-KIT', available: 40, ...win(11) }),
+    ],
+    skuSettings: {
+      'W-06': wearSettings('smart_ring'), 'W-09': wearSettings('smart_ring'),
+      'W-13': wearSettings('smart_ring'), 'W-KIT': wearSettings('sizing_kit'),
+    },
+    wearableForecast: {
+      year: 2026,
+      monthlyUnits: [800, 800, 900, 900, 1000, 1000, 1100, 1100, 1200, 1400, 2200, 1800],
+      smartRingSkus: ['W-06', 'W-09', 'W-13'],
+      sizingKitSku: 'W-KIT',
+    },
+  });
+}
+
+test('report vs queue: the report is built from velocity_exact, not the rounded display value', () => {
+  const out = computeRecommendations(wearableEngineInput(), TODAY);
+  const wear = out.results.filter(r => r.wearable_report);
+  assert.equal(wear.length, 4, 'every wearable SKU should carry a report');
+  const rings = wear.filter(r => !r.wearable_report!.is_attach_product);
+  const kit = wear.find(r => r.wearable_report!.is_attach_product)!;
+  // The fixture is only meaningful if 2dp actually loses information.
+  assert.ok(wear.some(r => r.velocity_exact !== r.velocity), 'fixture velocities must not survive 2dp');
+
+  const round4 = (n: number) => Math.round(n * 10000) / 10000;
+  const shareFrom = (pick: (r: typeof wear[number]) => number) => {
+    const total = rings.reduce((a, r) => a + pick(r), 0);
+    return new Map(rings.map(r => [r.sku, round4(pick(r) / total)]));
+  };
+  const exactShares = shareFrom(r => r.velocity_exact!);
+  const roundedShares = shareFrom(r => r.velocity!);
+
+  // THE GUARD: each variant's share of the forecast must come from the full-precision rate. Pass the
+  // display-rounded value into buildWearablePlans instead and these drift, taking the transfers, the
+  // China orders and the warehouse earmark with them — which is how the report came to disagree with
+  // the Ship-to-FBA queue on the same SKU.
+  for (const r of rings) {
+    assert.equal(r.wearable_report!.variant_share, exactShares.get(r.sku),
+      `${r.sku}: variant_share must be derived from velocity_exact`);
+  }
+  const ringTotalExact = rings.reduce((a, r) => a + r.velocity_exact!, 0);
+  assert.equal(kit.wearable_report!.attach_rate, round4(kit.velocity_exact! / ringTotalExact),
+    'the attach rate must be derived from velocity_exact too');
+
+  // And the two derivations really are distinguishable, so the assertions above have teeth. If this
+  // ever fails, strengthen the fixture rather than dropping the checks.
+  assert.ok(rings.some(r => roundedShares.get(r.sku) !== exactShares.get(r.sku)),
+    'fixture must be sensitive to 2dp rounding, or it cannot catch the regression');
+
+  // Belt and braces: rebuilt the way server/wearable-inputs.ts does it, the projection's first
+  // transfer is the queue's quantity — the two screens the team compares.
+  const inputs: WearableSkuInput[] = wear.map(r => ({
+    sku: r.sku, role: r.wearable_report!.is_attach_product ? 'sizing_kit' as const : 'smart_ring' as const,
+    velocity: r.velocity_exact, fba_available: r.fba_available, fba_coming: r.fba_coming,
+    template: r.template, case_pack: 1, moq: 1,
+  }));
+  const forecast = { year: 2026, monthlyUnits: [800, 800, 900, 900, 1000, 1000, 1100, 1100, 1200, 1400, 2200, 1800] };
+  for (const r of wear) {
+    const plan = projectWearableSku(inputs, forecast, TODAY, r.sku, 120);
+    assert.equal(plan?.transfers.find(t => t.day === 0)?.qty ?? 0, r.recommended_ship_qty,
+      `${r.sku}: the plan's first transfer must equal the Ship-to-FBA queue`);
+  }
 });

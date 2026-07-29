@@ -122,10 +122,32 @@ export function ConfirmHost() {
 
 export function downloadCsv(filename: string, csv: string) {
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  saveBlob(filename, blob);
+}
+
+function saveBlob(filename: string, blob: Blob) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
   a.download = filename;
   a.click();
   URL.revokeObjectURL(url);
+}
+
+/**
+ * Download a file the server generates (an .xlsx workbook, say). Unlike downloadCsv the bytes come
+ * from the API rather than being built in the browser, so a failure arrives as a JSON error the
+ * caller should surface instead of saving a corrupt file.
+ */
+export async function downloadFromApi(path: string, fallbackName: string): Promise<void> {
+  const res = await fetch(path);
+  if (!res.ok) {
+    let msg = `${res.status} ${res.statusText}`;
+    try { msg = (await res.json()).error ?? msg; } catch { /* not JSON — keep the status */ }
+    throw new Error(msg);
+  }
+  // Prefer the server's filename (it carries the export date) and fall back to the caller's.
+  const disp = res.headers.get('Content-Disposition') ?? '';
+  const name = /filename="?([^";]+)"?/.exec(disp)?.[1] ?? fallbackName;
+  saveBlob(name, await res.blob());
 }
