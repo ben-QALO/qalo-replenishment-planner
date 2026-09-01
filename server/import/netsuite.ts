@@ -1,5 +1,14 @@
-// Parser for the NetSuite "Qalo Amazon Inventory Report" (Excel 2003 SpreadsheetML).
+// Parser for the NetSuite "Qalo Amazon Inventory Report".
 // Keyed on the Item column (= Amazon merchant SKU); reads the "Qalo Main WH" column.
+//
+// TWO file formats, because NetSuite's export changed under us: the original Excel 2003
+// SpreadsheetML (plain XML) and a real .xlsx (a ZIP). The old reader did `buf.toString('utf8')` and
+// regex-scanned for <Row> tags, so a genuine .xlsx arrived as binary noise, matched nothing, and the
+// upload failed with "is this the Qalo Amazon Inventory Report?" — on a file that WAS exactly that.
+// Both formats are now detected by magic bytes and flattened to the same rows-of-strings, so the
+// column-finding below is shared and cannot drift between them.
+
+import ExcelJS from 'exceljs';
 
 const SS = 'urn:schemas-microsoft-com:office:spreadsheet';
 
@@ -14,6 +23,10 @@ export interface NetsuiteParseResult {
   rows: WarehouseRow[];
   headerRowFound: boolean;
   qtyColumnLabel: string | null;
+  /** Which format the file turned out to be — surfaced so an error can name it. */
+  format: 'xlsx' | 'spreadsheetml';
+  /** The most header-like row we saw, for a useful message when the columns aren't found. */
+  headersSeen: string[];
 }
 
 /**
@@ -65,9 +78,41 @@ function num(v: string): number {
   return Number.isFinite(n) ? n : 0;
 }
 
-export function parseNetsuiteWarehouse(buf: Buffer): NetsuiteParseResult {
-  const xml = buf.toString('utf8');
-  const rows = readRows(xml);
+/** A real .xlsx is a ZIP, so it starts with "PK". SpreadsheetML is plain XML text. */
+function looksLikeXlsx(buf: Buffer): boolean {
+  return buf.length > 3 && buf[0] === 0x50 && buf[1] === 0x4b;
+}
+
+/** One cell of a real .xlsx as plain text — formulas, rich text and dates all flattened. */
+function cellText(v: unknown): string {
+  if (v === null || v === undefined) return '';
+  if (typeof v === 'string') return v.trim();
+  if (typeof v === 'number' || typeof v === 'boolean') return String(v);
+  if (v instanceof Date) return v.toISOString().slice(0, 10);
+  const o = v as Record<string, any>;
+  if (o.result !== undefined) return cellText(o.result);          // formula cell
+  if (Array.isArray(o.richText)) return o.richText.map((t: any) => t.text ?? '').join('').trim();
+  if (o.text !== undefined) return cellText(o.text);              // hyperlink cell
+  return '';
+}
+
+async function readXlsxRows(buf: Buffer): Promise<string[][]> {
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(buf);
+  const ws = wb.worksheets[0];
+  if (!ws) return [];
+  const rows: string[][] = [];
+  for (let r = 1; r <= ws.rowCount; r++) {
+    const cells: string[] = [];
+    for (let c = 1; c <= ws.columnCount; c++) cells.push(cellText(ws.getCell(r, c).value));
+    rows.push(cells);
+  }
+  return rows;
+}
+
+export async function parseNetsuiteWarehouse(buf: Buffer): Promise<NetsuiteParseResult> {
+  const format = looksLikeXlsx(buf) ? 'xlsx' as const : 'spreadsheetml' as const;
+  const rows = format === 'xlsx' ? await readXlsxRows(buf) : readRows(buf.toString('utf8'));
 
   // Find the header row: contains "Item" and a warehouse column.
   let headerIdx = -1;
@@ -89,7 +134,15 @@ export function parseNetsuiteWarehouse(buf: Buffer): NetsuiteParseResult {
     asinCol = r.findIndex(c => c.includes('asin'));
     break;
   }
-  if (headerIdx === -1) return { rows: [], headerRowFound: false, qtyColumnLabel: null };
+  if (headerIdx === -1) {
+    // Hand back the widest non-empty row as a best guess at "what we did see", so the upload error
+    // can name the actual column headings instead of only saying they were missing.
+    const headersSeen = rows.reduce<string[]>((best, r) => {
+      const filled = r.filter(c => c.trim()).length;
+      return filled > best.filter(c => c.trim()).length ? r : best;
+    }, []).filter(c => c.trim()).slice(0, 8);
+    return { rows: [], headerRowFound: false, qtyColumnLabel: null, format, headersSeen };
+  }
 
   const bySku = new Map<string, WarehouseRow>();
   for (let i = headerIdx + 1; i < rows.length; i++) {
@@ -110,5 +163,8 @@ export function parseNetsuiteWarehouse(buf: Buffer): NetsuiteParseResult {
     const existing = bySku.get(sku);
     if (!existing || row.onHand > existing.onHand) bySku.set(sku, row);
   }
-  return { rows: [...bySku.values()], headerRowFound: true, qtyColumnLabel: qtyLabel };
+  return {
+    rows: [...bySku.values()], headerRowFound: true, qtyColumnLabel: qtyLabel,
+    format, headersSeen: rows[headerIdx].filter(c => c.trim()),
+  };
 }
