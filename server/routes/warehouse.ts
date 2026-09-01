@@ -16,12 +16,19 @@ export function warehouseRoutes(app: FastifyInstance): void {
 
     let parsed;
     try {
-      parsed = parseNetsuiteWarehouse(buf);
+      parsed = await parseNetsuiteWarehouse(buf);
     } catch (err: any) {
       return reply.code(422).send({ error: `Could not read the NetSuite file: ${err?.message ?? err}` });
     }
     if (!parsed.headerRowFound) {
-      return reply.code(422).send({ error: 'Could not find the Item / Qalo Main WH columns — is this the Qalo Amazon Inventory Report?' });
+      // Name the columns we actually saw. The old message just asked whether it was the right
+      // report, which was useless when it WAS the right report in an unexpected format.
+      const seen = parsed.headersSeen.length
+        ? ` The columns found were: ${parsed.headersSeen.join(', ')}.`
+        : ' No column headings could be read at all.';
+      return reply.code(422).send({
+        error: `Could not find the "Item" and "Qalo Main WH" columns in this ${parsed.format === 'xlsx' ? 'Excel' : 'Excel 2003 XML'} file.${seen} Expected the NetSuite "Qalo Amazon Inventory Report".`,
+      });
     }
 
     const db = getDb();
