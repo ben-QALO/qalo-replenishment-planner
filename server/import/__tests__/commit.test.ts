@@ -112,3 +112,34 @@ test('force re-reads a file already imported (needed when the importer itself ch
   assert.equal(row.available, 99, 'the re-read values must actually replace the old ones');
   db.close();
 });
+
+test('a new SKU arrives with the CORE family standard: 50-unit carton, 50 MOQ', () => {
+  // Silicone ships in cartons of 50. A blank case pack sizes transfers and POs to the unit instead
+  // of the carton, so the tool asks for quantities the factory and warehouse cannot pick. New SKUs
+  // land as CORE (the column default), so they start with the standard rather than blank.
+  const db = freshDb();
+  commitSnapshot(db, { ...base, lines: [mkLine('NEW-RING-1', 10), mkLine('NEW-RING-2', 0)] });
+
+  const rows = db.prepare('SELECT sku, category, case_pack, moq FROM skus ORDER BY sku').all() as
+    { sku: string; category: string; case_pack: number; moq: number }[];
+  assert.equal(rows.length, 2);
+  for (const r of rows) {
+    assert.equal(r.category, 'core', 'a new SKU is CORE until someone says otherwise');
+    assert.equal(r.case_pack, 50, `${r.sku} should start with a 50-unit carton`);
+    assert.equal(r.moq, 50, `${r.sku} should start with a 50 MOQ`);
+  }
+});
+
+test('re-importing does not stamp over a case pack someone deliberately changed', () => {
+  // The 50/50 is the family standard, not a lock — a bulk multipack with a different carton must
+  // survive the next Amazon import.
+  const db = freshDb();
+  commitSnapshot(db, { ...base, lines: [mkLine('BULK-24', 10)] });
+  db.prepare('UPDATE skus SET case_pack = 24, moq = 240 WHERE sku = ?').run('BULK-24');
+
+  commitSnapshot(db, { ...base, snapshotDate: '2026-07-16', lines: [mkLine('BULK-24', 8)] });
+  const r = db.prepare('SELECT case_pack, moq FROM skus WHERE sku = ?').get('BULK-24') as
+    { case_pack: number; moq: number };
+  assert.equal(r.case_pack, 24, 'a deliberate exception must not be overwritten');
+  assert.equal(r.moq, 240);
+});
