@@ -65,8 +65,13 @@ export function commitSnapshot(db: Database.Database, input: CommitInput): Commi
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
 
     const skuExists = db.prepare('SELECT sku FROM skus WHERE sku = ?');
-    const insertSku = db.prepare(`INSERT INTO skus (sku, asin, fnsku, title, classification, first_seen_at, updated_at)
-      VALUES (?, ?, ?, ?, 'unclassified', ?, ?)`);
+    // A new SKU lands as CORE (the column's default), and every silicone product ships in cartons of
+    // 50 with a China minimum of 50 — so it starts with the family standard rather than blank. A blank
+    // case pack sizes transfers and POs to the unit instead of the carton, asking for quantities
+    // nobody can pick. Migration 019 backfilled the existing catalogue; this keeps it true for
+    // arrivals. Re-tagging a SKU as WEARABLE means setting its own case pack (a ring is 1, not 50).
+    const insertSku = db.prepare(`INSERT INTO skus (sku, asin, fnsku, title, classification, case_pack, moq, first_seen_at, updated_at)
+      VALUES (?, ?, ?, ?, 'unclassified', 50, 50, ?, ?)`);
     const refreshSku = db.prepare('UPDATE skus SET asin = COALESCE(?, asin), fnsku = COALESCE(?, fnsku), title = COALESCE(?, title), updated_at = ? WHERE sku = ?');
 
     const newSkus: string[] = [];
