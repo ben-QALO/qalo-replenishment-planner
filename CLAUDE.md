@@ -78,6 +78,11 @@ In dev, open **localhost:5173** (has live edits). localhost:8787 serves the *bui
 - **Case-pack rule** (`recommendTransfer`): prefer whole cases, but ship a **partial** rather
   than nothing when the warehouse can't fill a full case (e.g. 43 of a 50-case → ship 43); for
   slow movers, ship up to a **6-month cover cap** instead of skipping.
+- **"Discontinued" = sell through** (`engine/index.ts`, `status.ts`, `projectPlan`): a discontinued
+  SKU still gets Ship-to-FBA recommendations (overstock hold skipped — that stock is what should move)
+  but **never a China order**; with nothing left anywhere it reads as sold through. `ignore` is the
+  real "off" switch. Added 2026-09-30 when the women's silicone range was trimmed — a single switch
+  for both lanes would have stranded ~6,100 warehouse units.
 - **Dashboard "In-Stock Score"**: velocity-weighted % of selling SKUs that are in stock;
   case-pack-blocked stockouts are excluded so they don't count against you. All dashboard
   figures are scoped to **replenishable ("keep in stock")** SKUs only.
