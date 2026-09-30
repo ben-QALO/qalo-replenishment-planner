@@ -44,8 +44,21 @@ export function assignStatus(s: StatusInput): { status: StatusTier; why: string 
       why: 'New product from the last import — mark it “replenish” or “ignore” before the tool will plan it.',
     };
   }
-  if (s.classification === 'ignore' || s.classification === 'discontinued') {
+  if (s.classification === 'ignore') {
     return { status: 'NOT_REPLENISHABLE', why: 'Not being replenished — no recommendations are generated.' };
+  }
+  if (s.classification === 'discontinued') {
+    // Sell-through: nothing left anywhere means it's done. Otherwise it gets the normal status,
+    // worded so it never tells the team to order from China.
+    if (s.fba_position + s.warehouse_on_hand <= 0) {
+      return { status: 'NOT_REPLENISHABLE', why: 'Discontinued and sold through — no stock left, and it isn’t reordered from China.' };
+    }
+    const base = assignStatus({ ...s, classification: 'replenishable' });
+    const why = base.why
+      .replace(' Nothing is on the way — order from China and consider air freight.', ' Nothing is left to send.')
+      .replace(' Ship what you can and expedite a China order (air freight if needed).', ' Ship what you can.')
+      .replace('; pause ordering.', '.');
+    return { status: base.status, why: `${why} Discontinued: selling through what’s left, no more China orders.` };
   }
   // Missing from the FBA export with NO independent sales signal → stale, suspend. But if the
   // Business Report shows the ASIN is actively selling (FBM + FBA), the missing FBA line means

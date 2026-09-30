@@ -135,7 +135,7 @@ export const STATUS_META: Record<string, { label: string; tone: StatusTone; c: s
   OVERSTOCK:         { label: 'Overstocked',  tone: 'over',   c: 'var(--overstock)', bg: 'var(--overstock-bg)', help: 'Far more than you’ll need for a long time — pause ordering.' },
   AT_RISK:           { label: 'Needs info',   tone: 'info',   c: 'var(--atrisk)', bg: 'var(--atrisk-bg)', help: 'Missing a sales rate or a recent import — can’t be planned until you fix it.' },
   UNCLASSIFIED:      { label: 'New',          tone: 'info',   c: 'var(--atrisk)', bg: 'var(--atrisk-bg)', help: 'New product from the last import — mark it replenish or ignore.' },
-  NOT_REPLENISHABLE: { label: 'Not stocked',  tone: 'neutral', c: 'var(--neutral)', bg: 'var(--neutral-bg)', help: 'Set to ignore or discontinued — no recommendations.' },
+  NOT_REPLENISHABLE: { label: 'Not stocked',  tone: 'neutral', c: 'var(--neutral)', bg: 'var(--neutral-bg)', help: 'Set to ignore (or discontinued and sold through) — no recommendations.' },
 };
 
 /** Order the states are listed in the on-screen status key. */
@@ -161,3 +161,10 @@ export function fmtInt(n: number | null | undefined): string {
   if (n === null || n === undefined) return '—';
   return n.toLocaleString('en-US');
 }
+
+// Dropdown labels for a SKU's classification. "discontinued" is sell-through, not "off": the
+// warehouse stock keeps shipping to Amazon, only China orders stop — so the label says so.
+export const CLASS_LABEL: Record<string, string> = {
+  discontinued: 'discontinued (sell through, no China orders)',
+};
+export const classLabel = (c: string) => CLASS_LABEL[c] ?? c;
