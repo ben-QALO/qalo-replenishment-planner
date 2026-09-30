@@ -282,6 +282,8 @@ export function projectPlan(
   const comingDay = Math.max(1, Math.round(t.fba_ship_checkin_days / 2));
   const lead = chinaLeadDays(t);
   const urgentFloorDays = t.fba_ship_checkin_days + t.safety_days;
+  // Discontinued = sell through: keep shipping to Amazon, never order from China (see engine/index.ts).
+  const sellThrough = settings?.classification === 'discontinued';
 
   const series: DayPoint[] = [];
   const events: PlanEvent[] = [];
@@ -314,7 +316,7 @@ export function projectPlan(
 
     if (d % t.review_period_fba_days === 0) {
       const fbaCover = velocity > 0 ? (fba + inTransit) / velocity : Infinity;
-      const suppressShip = overstocked && fbaCover >= urgentFloorDays;
+      const suppressShip = overstocked && fbaCover >= urgentFloorDays && !sellThrough;
       if (!suppressShip) {
         const rec = recommendTransfer(velocity, fba, inTransit, wh, t, settings);
         if (rec.recommended_ship_qty > 0) {
@@ -324,7 +326,7 @@ export function projectPlan(
         }
       }
     }
-    if (d % t.review_period_po_days === 0 && !overstocked) {
+    if (d % t.review_period_po_days === 0 && !overstocked && !sellThrough) {
       // Recompute the position: the transfer decision above moved units into transit —
       // still in the pipeline (a transfer never changes the total).
       const inTransit2 = comingLeft + transfers.reduce((s, x) => s + x.qty, 0);

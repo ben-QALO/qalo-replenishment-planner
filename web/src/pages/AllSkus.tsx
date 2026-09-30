@@ -1,6 +1,6 @@
 import React, { useMemo, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { api, fmtInt, fmtNum, type SkusResponse, type SkuResult } from '../api.ts';
+import { api, classLabel, fmtInt, fmtNum, type SkusResponse, type SkuResult } from '../api.ts';
 import { StatusBadge, Flags, toast } from '../components/ui.tsx';
 
 const STATUS_FILTERS = ['STOCKOUT', 'CRITICAL', 'ORDER_NOW', 'ORDER_SOON', 'AT_RISK', 'OVERSTOCK', 'OK', 'UNCLASSIFIED', 'NOT_REPLENISHABLE'];
@@ -105,7 +105,7 @@ export function AllSkus({ data, refresh, openSku, initialStatus, initialFlag, in
           value={search} onChange={e => setSearch(e.target.value)} />
         <select className="field" value={classFilter ?? ''} onChange={e => setClassFilter(e.target.value || null)}>
           <option value="">All classifications</option>
-          {CLASSES.map(c => <option key={c} value={c}>{c}</option>)}
+          {CLASSES.map(c => <option key={c} value={c}>{classLabel(c)}</option>)}
         </select>
         <select className="field" value={setupFilter ?? ''} onChange={e => setSetupFilter(e.target.value || null)}
           title="Find products whose ordering settings were never filled in">
@@ -178,7 +178,7 @@ export function AllSkus({ data, refresh, openSku, initialStatus, initialFlag, in
                       <div className="cell-title" style={{ maxWidth: 190 }}>{r.title}</div>
                     </td>
                     <td><StatusBadge status={r.status} /></td>
-                    <td style={{ fontSize: 11.5, color: 'var(--muted)' }}>{r.classification}
+                    <td style={{ fontSize: 11.5, color: 'var(--muted)' }}>{r.classification === 'discontinued' ? 'sell through' : r.classification}
                       {r.fulfillment_channel === 'fbm' && <span className="flag" style={{ marginLeft: 4 }} title="Merchant-fulfilled — never shipped to FBA">FBM</span>}</td>
                     <td className="num">
                       {fmtNum(r.velocity)}
@@ -234,7 +234,7 @@ export function AllSkus({ data, refresh, openSku, initialStatus, initialFlag, in
           </select>
           {bulkField === 'classification' ? (
             <select value={bulkValue} onChange={e => setBulkValue(e.target.value)}>
-              {CLASSES.map(c => <option key={c} value={c}>{c}</option>)}
+              {CLASSES.map(c => <option key={c} value={c}>{classLabel(c)}</option>)}
             </select>
           ) : bulkField === 'fulfillment_channel' ? (
             <select value={bulkValue} onChange={e => setBulkValue(e.target.value)}>

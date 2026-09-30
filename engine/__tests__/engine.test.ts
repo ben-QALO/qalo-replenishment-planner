@@ -201,7 +201,7 @@ test('replenishable SKU with no velocity data → AT_RISK with NO_VELOCITY', () 
   assert.equal(r.recommended_po_qty, 0);
 });
 
-test('ignored / discontinued SKUs get NOT_REPLENISHABLE and no quantities', () => {
+test('ignored SKUs get NOT_REPLENISHABLE and no quantities', () => {
   const out = computeRecommendations(input({
     lines: [line({ sku: 'IGN-1', available: 0, ...steady(3) })],
     skuSettings: { 'IGN-1': settings({ classification: 'ignore' }) },
@@ -210,6 +210,47 @@ test('ignored / discontinued SKUs get NOT_REPLENISHABLE and no quantities', () =
   assert.equal(r.status, 'NOT_REPLENISHABLE');
   assert.equal(r.recommended_ship_qty, 0);
   assert.equal(r.include_in_plans, false);
+});
+
+test('discontinued = sell through: keeps shipping warehouse stock to Amazon, never orders from China', () => {
+  const out = computeRecommendations(input({
+    // Out at Amazon, 400 in the warehouse at 2/day: a replenishable SKU would get both lanes.
+    lines: [line({ sku: 'DISC-1', available: 0, ...steady(2) })],
+    skuSettings: { 'DISC-1': settings({ classification: 'discontinued' }) },
+    warehouse: { 'DISC-1': 400 },
+  }), TODAY);
+  const r = one(out, 'DISC-1');
+  assert.ok(r.recommended_ship_qty > 0, 'warehouse stock must still flow to Amazon');
+  assert.equal(r.recommended_po_qty, 0, 'never a China order');
+  assert.equal(r.include_in_plans, true, 'shows in the Ship-to-FBA queue');
+  assert.equal(out.summary.po_units_total, 0);
+  assert.ok(!/order from china|china order/i.test(r.why.replace('no more China orders', '')), `why must not ask for a China order: ${r.why}`);
+  assert.ok(r.why.includes('Discontinued'), r.why);
+});
+
+test('discontinued ships even when the warehouse holds far more than the plan (overstock hold skipped)', () => {
+  // 28 days at Amazon (above the 24-day ship-now floor, below the 38-day goal) and 5,000 in the
+  // warehouse. A replenishable SKU holds shipping as overstock; a sell-through one must not.
+  const out = computeRecommendations(input({
+    lines: [line({ sku: 'DISC-2', available: 28, ...steady(1) }), line({ sku: 'REP-2', available: 28, ...steady(1) })],
+    skuSettings: { 'DISC-2': settings({ classification: 'discontinued' }), 'REP-2': settings() },
+    warehouse: { 'DISC-2': 5000, 'REP-2': 5000 },
+  }), TODAY);
+  assert.equal(one(out, 'REP-2').recommended_ship_qty, 0, 'control: overstock hold applies to replenishable');
+  const r = one(out, 'DISC-2');
+  assert.equal(r.recommended_ship_qty, 20, 'refills to the 38-day goal: 38 − (28 − 10 leg-sales)');
+  assert.equal(r.recommended_po_qty, 0);
+});
+
+test('discontinued with nothing left anywhere is sold through — no recommendations', () => {
+  const out = computeRecommendations(input({
+    lines: [line({ sku: 'DISC-3', available: 0, ...steady(2) })],
+    skuSettings: { 'DISC-3': settings({ classification: 'discontinued' }) },
+  }), TODAY);
+  const r = one(out, 'DISC-3');
+  assert.equal(r.status, 'NOT_REPLENISHABLE');
+  assert.equal(r.recommended_ship_qty, 0);
+  assert.equal(r.recommended_po_qty, 0);
 });
 
 test('watch SKUs compute recommendations but are excluded from plans', () => {

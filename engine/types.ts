@@ -227,7 +227,7 @@ export interface SkuResult {
 
   template_label: string;      // e.g. 'GLOBAL: Ocean – standard', 'SKU: Air – expedited', '+ overrides'
   template: TemplateParams;
-  include_in_plans: boolean;   // only replenishable SKUs feed plan exports
+  include_in_plans: boolean;   // replenishable SKUs feed plan exports; discontinued ones feed transfers only
   consolidated_into?: string | null;  // primary SKU this duplicate-listing was folded into (ASIN consolidation)
 
   amazon_days_of_supply: number | null;

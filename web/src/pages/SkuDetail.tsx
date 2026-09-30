@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { api, fmtInt, fmtNum, type SkuResult } from '../api.ts';
+import { api, classLabel, fmtInt, fmtNum, type SkuResult } from '../api.ts';
 import { StatusBadge, Flags, toast } from '../components/ui.tsx';
 import { PlanChart, HistoryChart, type PlanData, type HistoryRow } from '../components/charts.tsx';
 import { WearablePlanChart, WearableTransferSchedule, WearableOrderSchedule } from '../components/WearablePlanChart.tsx';
@@ -220,7 +220,7 @@ export function SkuDetail({ sku, today, templates, refresh }: {
         <div style={{ padding: '14px 16px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px 18px' }}>
           <label style={{ fontSize: 12 }}>Classification<br />
             <select className="field" style={{ width: '100%' }} value={form.classification} onChange={set('classification')}>
-              {CLASSES.map(c => <option key={c} value={c}>{c}</option>)}
+              {CLASSES.map(c => <option key={c} value={c}>{classLabel(c)}</option>)}
             </select></label>
           <label style={{ fontSize: 12 }}>ASIN<br />
             <input className="field" style={{ width: '100%' }} value={form.asin} onChange={set('asin')} placeholder="B0..." /></label>

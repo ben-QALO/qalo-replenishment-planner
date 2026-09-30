@@ -119,7 +119,12 @@ export function computeRecommendations(input: EngineInput, today: string): Engin
     // carries the product's whole demand + inventory, so this one never gets its own transfer/PO.
     const consolidatedInto = settings?.consolidated_into ?? null;
     if (consolidatedInto) flags.push('CONSOLIDATED');
-    const planning = (classification === 'replenishable' || classification === 'watch') && canPlan && !consolidatedInto;
+    // DISCONTINUED = "sell through": no more China orders, but the stock already in the warehouse
+    // keeps flowing to Amazon until it's gone. Turning a product off used to strand its warehouse
+    // stock, because one switch stopped both lanes — 6,100 units of women's rings were about to sit
+    // on a shelf that way. So a discontinued SKU is planned for transfers only.
+    const sellThrough = classification === 'discontinued';
+    const planning = (classification === 'replenishable' || classification === 'watch' || sellThrough) && canPlan && !consolidatedInto;
 
     const fbaCover = daysOfCover(positions.fba_position, vel.velocity);
     const pipelineCover = daysOfCover(positions.total_pipeline, vel.velocity);
@@ -158,7 +163,9 @@ export function computeRecommendations(input: EngineInput, today: string): Engin
     // Overstock suppression is skipped for WEARABLE: `total_pipeline` includes the warehouse and
     // open China POs, which are shared with retail/Shopify — so a big shared pool would otherwise
     // look like a glut and stop shipping to Amazon. The forecast decides instead.
-    const canShip = planning && !isFbm && (isWearable || !suppressShip);
+    // Sell-through skips the overstock hold: its warehouse stock is the glut we WANT moved to Amazon
+    // (still only up to the normal FBA goal per shipment).
+    const canShip = planning && !isFbm && (isWearable || sellThrough || !suppressShip);
     let transfer = { required: 0, safe: 0, shortage: 0, recommended_ship_qty: 0 } as ReturnType<typeof recommendTransfer>;
     let forecastRate: number | null = null;
     if (canShip && frac && frac > 0 && fc?.monthlyUnits?.length) {
@@ -173,7 +180,7 @@ export function computeRecommendations(input: EngineInput, today: string): Engin
     } else if (canShip && vel.velocity !== null && vel.velocity > 0) {
       transfer = recommendTransfer(vel.velocity, positions.fba_available, positions.fba_coming, positions.warehouse_on_hand, template, settings, { ignoreWarehouseCap: isWearable });
     }
-    const po = planning && !isWearable && vel.velocity !== null && vel.velocity > 0 && !overstocked
+    const po = planning && !isWearable && !sellThrough && vel.velocity !== null && vel.velocity > 0 && !overstocked
       ? recommendPo(vel.velocity, positions.total_pipeline, positions.fba_position, template, settings, today)
       : { recommended_po_qty: 0, need_by_arrival: null, place_by_date: null, flags: [] };
     if (transfer.shortage > 0) flags.push('WAREHOUSE_SHORT');
@@ -308,7 +315,7 @@ export function computeRecommendations(input: EngineInput, today: string): Engin
       template_label: label,
       template,
       consolidated_into: consolidatedInto,
-      include_in_plans: classification === 'replenishable' && canPlan && !consolidatedInto,
+      include_in_plans: (classification === 'replenishable' || sellThrough) && canPlan && !consolidatedInto,
       amazon_days_of_supply: line?.amazon_days_of_supply ?? null,
       amazon_min_inventory_level: line?.amazon_min_inventory_level ?? null,
       category: isWearable ? 'wearable' : 'core',
